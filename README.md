@@ -1,7 +1,5 @@
 # 🏥 HealthLab Portal — Serverless Patient Onboarding
 
-# 🏥 HealthLab Portal — Serverless Patient Onboarding
-
 [![CI](https://github.com/emmanuelfornah/healthlab-portal/actions/workflows/ci.yml/badge.svg)](https://github.com/emmanuelfornah/healthlab-portal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![AWS SAM](https://img.shields.io/badge/AWS-SAM-orange.svg)](https://aws.amazon.com/serverless/sam/)
