@@ -1,0 +1,25 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+
+# SAM
+backend/.aws-sam/
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+
+# Env & secrets
+.env
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
