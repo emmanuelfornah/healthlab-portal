@@ -1,0 +1,129 @@
+/* HealthLab Portal — clinical, single-column, calm.
+   Intentionally different from the PedalWorks storefront look. */
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 1.25rem 4rem;
+}
+
+/* Header: clean clinical band with a thin accent rule */
+.banner {
+  text-align: center;
+  padding: 2.5rem 1rem 1.5rem;
+  border-bottom: 3px solid var(--hl-primary);
+  margin-bottom: 2rem;
+  position: relative;
+}
+
+.banner h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+  color: var(--hl-primary-dark);
+}
+
+.tagline {
+  margin: 0.35rem 0 0;
+  color: var(--hl-muted);
+  font-size: 0.98rem;
+}
+
+/* Card: soft, medical-record feel */
+.card {
+  background: var(--hl-surface);
+  border: 1px solid var(--hl-line);
+  border-radius: 14px;
+  padding: 2rem;
+  box-shadow: 0 4px 18px rgba(10, 125, 140, 0.06);
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 1.3rem;
+  color: var(--hl-accent);
+}
+
+/* Inputs */
+input[type="file"] {
+  display: block;
+  width: 100%;
+  padding: 0.85rem;
+  margin: 1rem 0 1.25rem;
+  border: 1.5px dashed var(--hl-line);
+  border-radius: 10px;
+  background: #f8fbfc;
+  color: var(--hl-muted);
+}
+
+/* Buttons */
+.primary-btn {
+  background: var(--hl-primary);
+  color: #fff;
+  border: none;
+  padding: 0.8rem 1.6rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.primary-btn:hover { background: var(--hl-primary-dark); }
+
+.secondary-btn {
+  background: transparent;
+  color: var(--hl-accent);
+  border: 1.5px solid var(--hl-accent);
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-btn {
+  position: absolute;
+  top: 1.25rem;
+  right: 0;
+  background: none;
+  border: none;
+  color: var(--hl-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Status panel — reads like a clinical checklist */
+.status-panel {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--hl-line);
+}
+
+.status-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+.status-list li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--hl-line);
+  color: var(--hl-muted);
+}
+.status-list li strong { color: var(--hl-text); }
+
+/* Messages */
+.message {
+  margin: 1.5rem 0 0;
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+.message-pending { background: #eef4f8; color: var(--hl-accent); }
+.message-success { background: #e7f4ee; color: var(--hl-ok); }
+.message-error { background: #fbeaee; color: var(--hl-err); }
+
+.footer {
+  margin-top: 3rem;
+  text-align: center;
+  color: var(--hl-muted);
+  font-size: 0.85rem;
+}
