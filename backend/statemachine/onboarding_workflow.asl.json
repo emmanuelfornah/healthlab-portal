@@ -1,0 +1,132 @@
+{
+  "Comment": "Patient onboarding document validation workflow",
+  "StartAt": "UnzipIntake",
+  "States": {
+    "UnzipIntake": {
+      "Type": "Task",
+      "Resource": "${UnzipFunctionArn}",
+      "ResultPath": "$.unzipResult",
+      "Next": "WritePatientRecord",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "HandleUnzipError"
+        }
+      ]
+    },
+    "HandleUnzipError": {
+      "Type": "Fail",
+      "Error": "UnzipFailed",
+      "Cause": "Failed to extract intake bundle"
+    },
+    "WritePatientRecord": {
+      "Type": "Task",
+      "Resource": "${WritePatientRecordFunctionArn}",
+      "InputPath": "$.unzipResult",
+      "ResultPath": "$.recordResult",
+      "Next": "ParallelValidation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "HandleRecordError"
+        }
+      ]
+    },
+    "HandleRecordError": {
+      "Type": "Fail",
+      "Error": "PatientRecordWriteFailed",
+      "Cause": "Failed to write patient record to DynamoDB"
+    },
+    "ParallelValidation": {
+      "Type": "Parallel",
+      "ResultPath": "$.validationResults",
+      "Next": "SubmitEligibilityCheck",
+      "Branches": [
+        {
+          "StartAt": "VerifyIdentity",
+          "States": {
+            "VerifyIdentity": {
+              "Type": "Task",
+              "Resource": "${VerifyIdentityFunctionArn}",
+              "InputPath": "$.unzipResult",
+              "ResultPath": "$.identityResult",
+              "End": true,
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "IdentityVerificationFailed"
+                }
+              ]
+            },
+            "IdentityVerificationFailed": {
+              "Type": "Pass",
+              "Result": {
+                "status": "failed",
+                "message": "Identity verification failed"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ExtractDetails",
+          "States": {
+            "ExtractDetails": {
+              "Type": "Task",
+              "Resource": "${ExtractDetailsFunctionArn}",
+              "InputPath": "$.unzipResult",
+              "ResultPath": "$.detailsResult",
+              "End": true,
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "DetailsExtractionFailed"
+                }
+              ]
+            },
+            "DetailsExtractionFailed": {
+              "Type": "Pass",
+              "Result": {
+                "status": "failed",
+                "message": "Details extraction failed"
+              },
+              "End": true
+            }
+          }
+        }
+      ]
+    },
+    "SubmitEligibilityCheck": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${EligibilityQueueUrl}",
+        "MessageBody": {
+          "intake_id.$": "$.recordResult.intake_id",
+          "member_id.$": "$.recordResult.member_id"
+        }
+      },
+      "ResultPath": "$.sqsResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "HandleSQSError"
+        }
+      ]
+    },
+    "HandleSQSError": {
+      "Type": "Pass",
+      "Result": {
+        "status": "failed",
+        "message": "Failed to submit eligibility check to queue"
+      },
+      "End": true
+    }
+  }
+}

@@ -1,0 +1,482 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: HealthLab Portal - Serverless patient onboarding and identity verification backend
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 20
+    MemorySize: 128
+    Tracing: Active
+    Environment:
+      Variables:
+        BUCKET_NAME: !Ref IntakeBucket
+        TABLE_NAME: !Ref PatientRecordsTable
+        TOPIC_ARN: !Ref OnboardingNotifications
+        QUEUE_URL: !Ref EligibilityQueue
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+
+Resources:
+  # S3 bucket for patient intake documents
+  IntakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'healthlab-intake-${AWS::AccountId}-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  # DynamoDB table for patient records
+  PatientRecordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'PatientRecords-${Environment}'
+      AttributeDefinitions:
+        - AttributeName: INTAKE_ID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: INTAKE_ID
+          KeyType: HASH
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 2
+        WriteCapacityUnits: 2
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # SNS topic for onboarding notifications (care team / patient)
+  OnboardingNotifications:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'OnboardingNotifications-${Environment}'
+      DisplayName: HealthLab Onboarding Notifications
+      KmsMasterKeyId: alias/aws/sns
+
+  # SQS queue for insurance eligibility checks
+  EligibilityQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'EligibilityQueue-${Environment}'
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EligibilityDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  EligibilityDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'EligibilityDeadLetterQueue-${Environment}'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  # Shared IAM role for onboarding Lambda functions
+  OnboardingLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLabOnboardingLambdaRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub '${IntakeBucket.Arn}/*'
+        - PolicyName: DynamoDBAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt PatientRecordsTable.Arn
+        - PolicyName: RekognitionAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: rekognition:CompareFaces
+                Resource: '*'
+        - PolicyName: TextractAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: textract:AnalyzeID
+                Resource: '*'
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref OnboardingNotifications
+        - PolicyName: SQSAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt EligibilityQueue.Arn
+
+  # Lambda functions
+  UnzipFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-Unzip-${Environment}'
+      CodeUri: src/unzip/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+
+  WritePatientRecordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-WritePatientRecord-${Environment}'
+      CodeUri: src/write_patient_record/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+
+  VerifyIdentityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-VerifyIdentity-${Environment}'
+      CodeUri: src/verify_identity/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+
+  ExtractDetailsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-ExtractDetails-${Environment}'
+      CodeUri: src/extract_details/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+
+  SubmitEligibilityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-SubmitEligibility-${Environment}'
+      CodeUri: src/submit_eligibility/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+      Environment:
+        Variables:
+          API_ENDPOINT: !Sub 'https://${EligibilityApi}.execute-api.${AWS::Region}.amazonaws.com'
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EligibilityQueue.Arn
+            BatchSize: 1
+
+  ValidateEligibilityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-ValidateEligibility-${Environment}'
+      CodeUri: src/validate_eligibility/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref EligibilityApi
+            Path: /eligibility
+            Method: POST
+
+  # API Gateway HTTP API for the mock eligibility service (internal)
+  EligibilityApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub 'EligibilityApi-${Environment}'
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - POST
+        AllowHeaders:
+          - Content-Type
+
+  # ============================================================
+  # Amazon Cognito - patient authentication (Hosted UI)
+  # ============================================================
+
+  PatientUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub 'HealthLabPatients-${Environment}'
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  PatientUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub 'healthlab-patients-${AWS::AccountId}-${Environment}'
+      UserPoolId: !Ref PatientUserPool
+
+  PatientUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub 'HealthLabPatientPortal-${Environment}'
+      UserPoolId: !Ref PatientUserPool
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - http://localhost:5173/
+        - https://healthlabportal.com/
+      LogoutURLs:
+        - http://localhost:5173/
+        - https://healthlabportal.com/
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ============================================================
+  # Patient-facing API - protected by Cognito JWT authorizer
+  # ============================================================
+
+  PatientApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub 'PatientApi-${Environment}'
+      CorsConfiguration:
+        AllowOrigins:
+          - 'http://localhost:5173'
+          - 'https://healthlabportal.com'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: '$request.header.Authorization'
+            JwtConfiguration:
+              issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${PatientUserPool}'
+              audience:
+                - !Ref PatientUserPoolClient
+
+  # Lambda backing the patient-facing API: issue a presigned upload URL and
+  # look up onboarding status. Protected by the Cognito authorizer above.
+  PatientPortalFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'HealthLab-PatientPortal-${Environment}'
+      CodeUri: src/patient_portal/
+      Handler: app.lambda_handler
+      Role: !GetAtt OnboardingLambdaRole.Arn
+      Events:
+        RequestUpload:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PatientApi
+            Path: /intake/upload-url
+            Method: POST
+        GetStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PatientApi
+            Path: /intake/{intake_id}/status
+            Method: GET
+        GetFhir:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PatientApi
+            Path: /intake/{intake_id}/fhir
+            Method: GET
+
+  # Step Functions state machine orchestrating the onboarding workflow
+  OnboardingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'OnboardingStateMachine-${Environment}'
+      DefinitionUri: statemachine/onboarding_workflow.asl.json
+      DefinitionSubstitutions:
+        UnzipFunctionArn: !GetAtt UnzipFunction.Arn
+        WritePatientRecordFunctionArn: !GetAtt WritePatientRecordFunction.Arn
+        VerifyIdentityFunctionArn: !GetAtt VerifyIdentityFunction.Arn
+        ExtractDetailsFunctionArn: !GetAtt ExtractDetailsFunction.Arn
+        EligibilityQueueUrl: !Ref EligibilityQueue
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref UnzipFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WritePatientRecordFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref VerifyIdentityFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ExtractDetailsFunction
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt EligibilityQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+              Resource: '*'
+
+  # EventBridge rule to trigger the workflow on intake upload
+  IntakeUploadRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'IntakeUploadRule-${Environment}'
+      Description: Trigger onboarding state machine on S3 upload to intake/ prefix
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref IntakeBucket
+          object:
+            key:
+              - prefix: intake/
+      State: ENABLED
+      Targets:
+        - Id: OnboardingStateMachineTarget
+          Arn: !GetAtt OnboardingStateMachine.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !GetAtt OnboardingStateMachine.Arn
+
+Outputs:
+  IntakeBucketName:
+    Description: S3 bucket for patient intake documents
+    Value: !Ref IntakeBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-IntakeBucket'
+
+  PatientRecordsTableName:
+    Description: DynamoDB table for patient records
+    Value: !Ref PatientRecordsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-PatientRecordsTable'
+
+  OnboardingNotificationsTopicArn:
+    Description: SNS topic ARN for onboarding notifications
+    Value: !Ref OnboardingNotifications
+    Export:
+      Name: !Sub '${AWS::StackName}-OnboardingNotifications'
+
+  EligibilityQueueUrl:
+    Description: SQS queue URL for eligibility checks
+    Value: !Ref EligibilityQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-EligibilityQueue'
+
+  EligibilityApiEndpoint:
+    Description: API Gateway endpoint for the eligibility service
+    Value: !Sub 'https://${EligibilityApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  StateMachineArn:
+    Description: Step Functions state machine ARN
+    Value: !GetAtt OnboardingStateMachine.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-StateMachine'
+
+  PatientApiEndpoint:
+    Description: Patient-facing API endpoint (Cognito-protected)
+    Value: !Sub 'https://${PatientApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-PatientApi'
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref PatientUserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool app client ID
+    Value: !Ref PatientUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
+  CognitoHostedUiDomain:
+    Description: Cognito Hosted UI domain
+    Value: !Sub 'https://healthlab-patients-${AWS::AccountId}-${Environment}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoDomain'
