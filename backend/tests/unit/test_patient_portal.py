@@ -27,10 +27,22 @@ def test_rejects_unauthenticated_request(lambda_context):
     assert response["statusCode"] == 401
 
 
+def _create_table():
+    dynamodb = boto3.client("dynamodb", region_name="us-east-1")
+    dynamodb.create_table(
+        TableName=TABLE,
+        KeySchema=[{"AttributeName": "INTAKE_ID", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "INTAKE_ID", "AttributeType": "S"}],
+        BillingMode="PAY_PER_REQUEST",
+    )
+    return boto3.resource("dynamodb", region_name="us-east-1").Table(TABLE)
+
+
 @mock_aws
 def test_create_upload_url_returns_presigned_url(lambda_context):
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket=BUCKET)
+    table = _create_table()
 
     handler = load_handler("patient_portal")
     response = handler.lambda_handler(_auth_event("POST /intake/upload-url"), lambda_context)
@@ -41,19 +53,17 @@ def test_create_upload_url_returns_presigned_url(lambda_context):
     assert body["upload_url"].startswith("https://")
     assert body["expires_in"] == 300
 
+    # Ownership is recorded up front so status/FHIR lookups can be scoped later.
+    item = table.get_item(Key={"INTAKE_ID": body["intake_id"]})["Item"]
+    assert item["PATIENT_SUB"] == "patient-abc-123"
+
 
 @mock_aws
 def test_get_status_returns_record(lambda_context):
-    dynamodb = boto3.client("dynamodb", region_name="us-east-1")
-    dynamodb.create_table(
-        TableName=TABLE,
-        KeySchema=[{"AttributeName": "INTAKE_ID", "KeyType": "HASH"}],
-        AttributeDefinitions=[{"AttributeName": "INTAKE_ID", "AttributeType": "S"}],
-        BillingMode="PAY_PER_REQUEST",
-    )
-    resource = boto3.resource("dynamodb", region_name="us-east-1")
-    resource.Table(TABLE).put_item(Item={
+    table = _create_table()
+    table.put_item(Item={
         "INTAKE_ID": "int-1",
+        "PATIENT_SUB": "patient-abc-123",
         "STATUS": "PENDING",
         "IDENTITY_VERIFIED": True,
         "DETAILS_MATCH": True,
@@ -71,17 +81,27 @@ def test_get_status_returns_record(lambda_context):
 
 
 @mock_aws
-def test_get_fhir_returns_bundle(lambda_context):
-    dynamodb = boto3.client("dynamodb", region_name="us-east-1")
-    dynamodb.create_table(
-        TableName=TABLE,
-        KeySchema=[{"AttributeName": "INTAKE_ID", "KeyType": "HASH"}],
-        AttributeDefinitions=[{"AttributeName": "INTAKE_ID", "AttributeType": "S"}],
-        BillingMode="PAY_PER_REQUEST",
-    )
-    resource = boto3.resource("dynamodb", region_name="us-east-1")
-    resource.Table(TABLE).put_item(Item={
+def test_get_status_404_for_other_patients_intake(lambda_context):
+    table = _create_table()
+    table.put_item(Item={
         "INTAKE_ID": "int-1",
+        "PATIENT_SUB": "someone-else",
+        "STATUS": "PENDING",
+    })
+
+    handler = load_handler("patient_portal")
+    event = _auth_event("GET /intake/{intake_id}/status", {"intake_id": "int-1"})
+    response = handler.lambda_handler(event, lambda_context)
+
+    assert response["statusCode"] == 404
+
+
+@mock_aws
+def test_get_fhir_returns_bundle(lambda_context):
+    table = _create_table()
+    table.put_item(Item={
+        "INTAKE_ID": "int-1",
+        "PATIENT_SUB": "patient-abc-123",
         "MEMBER_ID": "M999999",
         "FIRST_NAME": "Ada",
         "LAST_NAME": "Lovelace",
@@ -101,14 +121,24 @@ def test_get_fhir_returns_bundle(lambda_context):
 
 
 @mock_aws
+def test_get_fhir_404_for_other_patients_intake(lambda_context):
+    table = _create_table()
+    table.put_item(Item={
+        "INTAKE_ID": "int-1",
+        "PATIENT_SUB": "someone-else",
+        "FIRST_NAME": "Ada",
+    })
+
+    handler = load_handler("patient_portal")
+    event = _auth_event("GET /intake/{intake_id}/fhir", {"intake_id": "int-1"})
+    response = handler.lambda_handler(event, lambda_context)
+
+    assert response["statusCode"] == 404
+
+
+@mock_aws
 def test_get_status_404_when_missing(lambda_context):
-    dynamodb = boto3.client("dynamodb", region_name="us-east-1")
-    dynamodb.create_table(
-        TableName=TABLE,
-        KeySchema=[{"AttributeName": "INTAKE_ID", "KeyType": "HASH"}],
-        AttributeDefinitions=[{"AttributeName": "INTAKE_ID", "AttributeType": "S"}],
-        BillingMode="PAY_PER_REQUEST",
-    )
+    _create_table()
     handler = load_handler("patient_portal")
     event = _auth_event("GET /intake/{intake_id}/status", {"intake_id": "missing"})
     response = handler.lambda_handler(event, lambda_context)

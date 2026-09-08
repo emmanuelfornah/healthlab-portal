@@ -63,10 +63,10 @@ def lambda_handler(event, context):
         return _create_upload_url(patient_sub)
     if route_key == "GET /intake/{intake_id}/status":
         intake_id = event.get("pathParameters", {}).get("intake_id", "")
-        return _get_status(intake_id)
+        return _get_status(intake_id, patient_sub)
     if route_key == "GET /intake/{intake_id}/fhir":
         intake_id = event.get("pathParameters", {}).get("intake_id", "")
-        return _get_fhir(intake_id)
+        return _get_fhir(intake_id, patient_sub)
 
     return _response(404, {"message": "Not found"})
 
@@ -80,6 +80,14 @@ def _create_upload_url(patient_sub):
         Params={"Bucket": BUCKET_NAME, "Key": key, "ContentType": "application/zip"},
         ExpiresIn=UPLOAD_URL_EXPIRY,
     )
+
+    # Record ownership up front so status/FHIR lookups can be scoped to the
+    # requesting patient once the async workflow populates the rest of the record.
+    table.put_item(Item={
+        "INTAKE_ID": intake_id,
+        "PATIENT_SUB": patient_sub,
+        "STATUS": "AWAITING_UPLOAD",
+    })
     logger.info(f"Issued upload URL for intake {intake_id} (patient {patient_sub})")
 
     return _response(200, {
@@ -89,12 +97,12 @@ def _create_upload_url(patient_sub):
     })
 
 
-def _get_status(intake_id):
+def _get_status(intake_id, patient_sub):
     if not intake_id:
         return _response(400, {"message": "intake_id is required"})
 
     item = table.get_item(Key={"INTAKE_ID": intake_id}).get("Item")
-    if not item:
+    if not item or item.get("PATIENT_SUB") != patient_sub:
         return _response(404, {"message": "Intake not found", "intake_id": intake_id})
 
     return _response(200, {
@@ -106,13 +114,13 @@ def _get_status(intake_id):
     })
 
 
-def _get_fhir(intake_id):
+def _get_fhir(intake_id, patient_sub):
     """Return the patient record as a FHIR R4 Bundle (Patient + Coverage)."""
     if not intake_id:
         return _response(400, {"message": "intake_id is required"})
 
     item = table.get_item(Key={"INTAKE_ID": intake_id}).get("Item")
-    if not item:
+    if not item or item.get("PATIENT_SUB") != patient_sub:
         return _response(404, {"message": "Intake not found", "intake_id": intake_id})
 
     bundle = to_bundle(item)

@@ -33,8 +33,7 @@ def lambda_handler(event, context):
         reader = csv.DictReader(io.StringIO(csv_content))
         patient_data = next(reader)
 
-        item = {
-            "INTAKE_ID": intake_id,
+        fields = {
             "MEMBER_ID": patient_data.get("MEMBER_ID", ""),
             "FIRST_NAME": patient_data.get("FIRST_NAME", ""),
             "LAST_NAME": patient_data.get("LAST_NAME", ""),
@@ -51,12 +50,19 @@ def lambda_handler(event, context):
             "CREATED_AT": datetime.now(timezone.utc).isoformat(),
         }
 
-        table.put_item(Item=item)
+        # update_item (not put_item) so PATIENT_SUB, written when the upload URL
+        # was issued, survives this merge instead of being overwritten.
+        table.update_item(
+            Key={"INTAKE_ID": intake_id},
+            UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in fields),
+            ExpressionAttributeNames={f"#{k}": k for k in fields},
+            ExpressionAttributeValues={f":{k}": v for k, v in fields.items()},
+        )
         logger.info(f"Stored patient record for {intake_id}")
 
         return {
             "intake_id": intake_id,
-            "member_id": item["MEMBER_ID"],
+            "member_id": fields["MEMBER_ID"],
             "status": "success",
         }
 
