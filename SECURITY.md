@@ -81,21 +81,23 @@ demonstrate the pattern.
 
 ### Account-level threat detection & monitoring
 
-Enable once per account (console), shared across all projects:
-- **Amazon GuardDuty** — threat detection
-- **AWS CloudTrail** — API activity audit trail
-- **AWS Config** — configuration compliance. At minimum, enable these
-  managed rules against the two S3 buckets:
-  - `s3-bucket-server-side-encryption-enabled`
-  - `s3-bucket-public-read-prohibited`
+Enable once per account (console), shared across all projects. Status as of
+the last review:
 
-  (`restricted-ssh` doesn't apply — no EC2/SSH anywhere in this stack.)
-- **AWS Security Hub** — aggregates GuardDuty/Inspector/Macie/Config findings
-  into one dashboard
-- **MFA** on all console/IAM users
-- **IAM Policy Simulator** — validate each Lambda role's actual permissions
-  match what's documented above (e.g. confirm `ValidateEligibilityRole`
-  really can't reach S3/DynamoDB) before trusting the template alone
+| Control | Status |
+|---|---|
+| **Amazon GuardDuty** — threat detection | ✅ Enabled |
+| **AWS CloudTrail** — multi-region trail, S3-delivered, log file validation on (beyond the account's default 90-day event history) | ✅ Enabled |
+| **AWS Security Hub** — aggregates GuardDuty/Inspector/Macie/Config findings into one dashboard, default standards on | ✅ Enabled |
+| **AWS Config** — scoped to `AWS::S3::Bucket` only (not `allSupported`, to avoid recording every resource type account-wide), with `s3-bucket-server-side-encryption-enabled` and `s3-bucket-public-read-prohibited` rules (`restricted-ssh` doesn't apply — no EC2/SSH anywhere in this stack) | ✅ Enabled |
+| **MFA** on all console/IAM users | ⚠️ Partial — verify every IAM user with console access has MFA before treating this as done |
+| **AWS WAF** on the CloudFront distribution | ⬜ Not yet — see steps above |
+| **IAM Policy Simulator** validation of the per-function roles | ⬜ Not yet run |
+
+These are intentionally generic here — see the private project log for the
+exact commands and account-specific values used to enable them (not
+committed to this repo, consistent with the "no secrets/account identifiers
+in VCS" rule above).
 
 ## HIPAA Security Rule — technical safeguards mapping
 
