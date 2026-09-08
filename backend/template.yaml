@@ -280,9 +280,11 @@ Resources:
       CallbackURLs:
         - http://localhost:5173/
         - https://healthlabportal.com/
+        - !Sub 'https://${FrontendDistribution.DomainName}/'
       LogoutURLs:
         - http://localhost:5173/
         - https://healthlabportal.com/
+        - !Sub 'https://${FrontendDistribution.DomainName}/'
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
@@ -299,6 +301,7 @@ Resources:
         AllowOrigins:
           - 'http://localhost:5173'
           - 'https://healthlabportal.com'
+          - !Sub 'https://${FrontendDistribution.DomainName}'
         AllowMethods:
           - GET
           - POST
@@ -376,6 +379,75 @@ Resources:
                 - xray:PutTraceSegments
                 - xray:PutTelemetryRecords
               Resource: '*'
+
+  # ============================================================
+  # Frontend hosting - S3 (private, OAC-restricted) + CloudFront
+  # No custom domain yet; served from the default *.cloudfront.net
+  # ============================================================
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'healthlab-frontend-${AWS::AccountId}-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'healthlab-frontend-oac-${Environment}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        Origins:
+          - Id: FrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig: {}
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          # Managed-CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
 
   # EventBridge rule to trigger the workflow on intake upload
   IntakeUploadRule:
@@ -480,3 +552,21 @@ Outputs:
     Value: !Sub 'https://healthlab-patients-${AWS::AccountId}-${Environment}.auth.${AWS::Region}.amazoncognito.com'
     Export:
       Name: !Sub '${AWS::StackName}-CognitoDomain'
+
+  FrontendBucketName:
+    Description: S3 bucket the frontend build is synced to
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucket'
+
+  FrontendDistributionId:
+    Description: CloudFront distribution ID for the frontend (used for cache invalidation)
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendDistributionId'
+
+  FrontendUrl:
+    Description: Live URL for the patient portal frontend
+    Value: !Sub 'https://${FrontendDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendUrl'
