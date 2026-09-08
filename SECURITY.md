@@ -30,6 +30,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | Tracing / audit | AWS X-Ray active tracing; structured logs via Lambda Powertools |
 | Operational monitoring | CloudWatch alarms on Step Functions failures, the eligibility DLQ, Patient API 5xx errors, and critical-path Lambda errors, notifying a dedicated `OperationalAlarms` SNS topic; a CloudWatch dashboard aggregates workflow, API, Lambda, and queue metrics |
 | WAF on the frontend | `AWS::WAFv2::WebACL` (Core rule set + Known Bad Inputs managed rule groups, plus a 1,000 req/5min per-IP rate limit) attached directly to the CloudFront distribution's `WebACLId` |
+| TLS-only S3 access | Both S3 bucket policies (intake bucket, frontend bucket) explicitly `Deny` any request where `aws:SecureTransport` is `false` — belt-and-suspenders on top of everything already being HTTPS in practice |
 | No secrets in VCS | No credentials or account IDs committed; `.env` gitignored |
 
 ## Applied in the console (edge / account level)
