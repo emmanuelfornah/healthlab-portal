@@ -64,21 +64,29 @@ def lambda_handler(event, context):
             "ZIP_CODE_IN_ADDRESS": ["ZIP_CODE_IN_ADDRESS", "ZIP_CODE", "POSTAL_CODE"],
         }
 
-        mismatched_fields = []
-        for record_field, id_fields in fields_to_compare.items():
-            record_value = normalize_text(record.get(record_field, ""))
+        if not extracted_data:
+            # Textract found no identity document fields at all - the image
+            # isn't a readable ID, so there's nothing to reconcile against.
+            # Treating this as a match would let an unreadable/non-ID upload
+            # pass the check vacuously (nothing to disagree with).
+            logger.warning(f"No ID document fields extracted for {intake_id}")
+            mismatched_fields = list(fields_to_compare.keys())
+        else:
+            mismatched_fields = []
+            for record_field, id_fields in fields_to_compare.items():
+                record_value = normalize_text(record.get(record_field, ""))
 
-            id_value = ""
-            for f in id_fields:
-                if f in extracted_data:
-                    id_value = normalize_text(extracted_data[f])
-                    break
+                id_value = ""
+                for f in id_fields:
+                    if f in extracted_data:
+                        id_value = normalize_text(extracted_data[f])
+                        break
 
-            if record_value and id_value and record_value != id_value:
-                mismatched_fields.append(record_field)
-                logger.warning(
-                    f"Mismatch in {record_field}: form='{record_value}' vs ID='{id_value}'"
-                )
+                if record_value and id_value and record_value != id_value:
+                    mismatched_fields.append(record_field)
+                    logger.warning(
+                        f"Mismatch in {record_field}: form='{record_value}' vs ID='{id_value}'"
+                    )
 
         match = len(mismatched_fields) == 0
 
