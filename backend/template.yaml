@@ -288,6 +288,9 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+        # Admin-only (requires IAM cognito-idp:AdminInitiateAuth, not exposed
+        # to end users) - used for scripted/CI end-to-end testing.
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
 
   # ============================================================
   # Patient-facing API - protected by Cognito JWT authorizer
