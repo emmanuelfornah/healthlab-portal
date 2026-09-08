@@ -68,8 +68,7 @@ Patient ─► CloudFront + S3 (React SPA, private bucket via Origin Access Cont
 ```
 healthlab-portal/
 ├── .github/workflows/
-│   ├── ci.yml                        # lint, test, build - every push/PR
-│   └── deploy.yml                    # OIDC deploy to AWS - after CI passes on main
+│   └── ci.yml                        # lint, test, build, then OIDC deploy to AWS on main
 ├── backend/
 │   ├── template.yaml                 # SAM stack (all AWS resources)
 │   ├── statemachine/
@@ -181,9 +180,12 @@ Functions execution → status/FHIR lookup), not just unit-tested.
 ## Deployment
 
 The stack deploys via GitHub Actions
-([`deploy.yml`](.github/workflows/deploy.yml)) after the CI quality gate
-passes on `main`, or on demand. Authentication uses GitHub's OIDC provider —
-the workflow assumes an IAM role scoped to this exact repository, with no
+([`ci.yml`](.github/workflows/ci.yml)) — a single pipeline where the deploy
+jobs run only after both CI jobs pass on a push to `main` (never on a PR),
+and only when `backend/`, `frontend/`, or the workflow file itself actually
+changed, so a docs-only commit doesn't trigger a pointless redeploy.
+Authentication uses GitHub's OIDC provider — the workflow assumes an IAM
+role scoped to this exact repository, with no
 long-lived AWS credentials stored anywhere. The backend job runs
 `sam build && sam deploy`; the frontend job builds against the live stack's
 outputs and syncs to S3 + CloudFront.
