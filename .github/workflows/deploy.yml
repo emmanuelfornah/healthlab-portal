@@ -43,6 +43,7 @@ jobs:
       frontend_bucket: ${{ steps.outputs.outputs.frontend_bucket }}
       frontend_distribution_id: ${{ steps.outputs.outputs.frontend_distribution_id }}
       frontend_url: ${{ steps.outputs.outputs.frontend_url }}
+      custom_domain_url: ${{ steps.outputs.outputs.custom_domain_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -92,6 +93,7 @@ jobs:
           echo "frontend_bucket=$(get_output FrontendBucketName)" >> "$GITHUB_OUTPUT"
           echo "frontend_distribution_id=$(get_output FrontendDistributionId)" >> "$GITHUB_OUTPUT"
           echo "frontend_url=$(get_output FrontendUrl)" >> "$GITHUB_OUTPUT"
+          echo "custom_domain_url=$(get_output CustomDomainUrl)" >> "$GITHUB_OUTPUT"
 
   deploy-frontend:
     name: Deploy frontend (S3 + CloudFront)
@@ -118,12 +120,14 @@ jobs:
         run: npm ci
 
       - name: Write .env from stack outputs
+        env:
+          LIVE_URL: ${{ needs.deploy-backend.outputs.custom_domain_url || needs.deploy-backend.outputs.frontend_url }}
         run: |
           cat > .env << EOF
           VITE_PATIENT_API_URL=${{ needs.deploy-backend.outputs.patient_api_url }}
           VITE_COGNITO_DOMAIN=${{ needs.deploy-backend.outputs.cognito_domain }}
           VITE_COGNITO_CLIENT_ID=${{ needs.deploy-backend.outputs.cognito_client_id }}
-          VITE_REDIRECT_URI=${{ needs.deploy-backend.outputs.frontend_url }}/
+          VITE_REDIRECT_URI=${LIVE_URL}/
           EOF
 
       - name: Build
@@ -146,4 +150,6 @@ jobs:
             --paths "/*"
 
       - name: Live URL
-        run: echo "Deployed to ${{ needs.deploy-backend.outputs.frontend_url }}"
+        run: |
+          echo "Deployed to ${{ needs.deploy-backend.outputs.custom_domain_url || needs.deploy-backend.outputs.frontend_url }}"
+          echo "(default CloudFront domain: ${{ needs.deploy-backend.outputs.frontend_url }})"
