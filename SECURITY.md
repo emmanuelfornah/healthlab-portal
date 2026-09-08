@@ -29,6 +29,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | Deploy credentials | GitHub Actions authenticates via OIDC (`sts:AssumeRoleWithWebIdentity`) — no long-lived AWS access keys stored in CI |
 | Tracing / audit | AWS X-Ray active tracing; structured logs via Lambda Powertools |
 | Operational monitoring | CloudWatch alarms on Step Functions failures, the eligibility DLQ, Patient API 5xx errors, and critical-path Lambda errors, notifying a dedicated `OperationalAlarms` SNS topic; a CloudWatch dashboard aggregates workflow, API, Lambda, and queue metrics |
+| WAF on the frontend | `AWS::WAFv2::WebACL` (Core rule set + Known Bad Inputs managed rule groups, plus a 1,000 req/5min per-IP rate limit) attached directly to the CloudFront distribution's `WebACLId` |
 | No secrets in VCS | No credentials or account IDs committed; `.env` gitignored |
 
 ## Applied in the console (edge / account level)
@@ -37,18 +38,17 @@ These are intentionally **not** in the app's SAM template — they are account- 
 edge-scoped and are easier to manage from the console without coupling them to
 application deploys.
 
-### AWS WAF on CloudFront (frontend)
-
-WAF cannot attach to S3 directly; it attaches to the CloudFront distribution
-that fronts the private S3 bucket, so it protects all traffic to the site.
-
-Steps (console):
-1. AWS WAF → **Create web ACL** → Region **Global (CloudFront)** (created in `us-east-1`).
-2. Add rules:
-   - **AWS Managed Rules — Core rule set (AWSManagedRulesCommonRuleSet)**
-   - **Known Bad Inputs (AWSManagedRulesKnownBadInputsRuleSet)**
-   - A **rate-based rule** (e.g. 1,000 requests / 5 min per IP).
-3. Associate the web ACL with the HealthLab CloudFront distribution.
+> **A note on WAF's placement.** This was originally planned as a
+> console-managed, out-of-template step — the reasoning being that
+> edge/account-level controls are easier to manage without coupling them to
+> app deploys. That reasoning didn't hold up for WAF specifically: its
+> attachment point (`WebACLId`) is a property of the CloudFront
+> distribution this template already owns, so managing it out-of-band risked
+> a future `sam deploy` silently reverting the association when
+> CloudFormation resent the distribution's full config. It's now in the SAM
+> template instead (see the table above) — the account-level controls below
+> (GuardDuty, CloudTrail, Config, Security Hub) don't have this problem,
+> since nothing in this stack owns them.
 
 > The API layer uses an HTTP API, which does not support direct WAF association
 > (WAF integrates with REST APIs). The API is protected by the Cognito JWT
@@ -91,8 +91,9 @@ the last review:
 | **AWS Security Hub** — aggregates GuardDuty/Inspector/Macie/Config findings into one dashboard, default standards on | ✅ Enabled |
 | **AWS Config** — scoped to `AWS::S3::Bucket` only (not `allSupported`, to avoid recording every resource type account-wide), with `s3-bucket-server-side-encryption-enabled` and `s3-bucket-public-read-prohibited` rules (`restricted-ssh` doesn't apply — no EC2/SSH anywhere in this stack) | ✅ Enabled |
 | **MFA** on all console/IAM users | ⚠️ Partial — verify every IAM user with console access has MFA before treating this as done |
-| **AWS WAF** on the CloudFront distribution | ⬜ Not yet — see steps above |
 | **IAM Policy Simulator** validation of the per-function roles | ⬜ Not yet run |
+
+(AWS WAF moved to the "Enforced in code" table above — see the note further up.)
 
 These are intentionally generic here — see the private project log for the
 exact commands and account-specific values used to enable them (not
