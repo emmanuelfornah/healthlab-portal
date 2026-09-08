@@ -91,11 +91,18 @@ Resources:
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
 
-  # Shared IAM role for onboarding Lambda functions
-  OnboardingLambdaRole:
+  # ============================================================
+  # Per-function least-privilege IAM roles.
+  # Each Lambda gets only the permissions its own code actually calls,
+  # instead of one broad role shared across all 7 functions (e.g.
+  # ValidateEligibilityRole below is a pure request-body handler with no
+  # AWS resource access at all - see src/validate_eligibility/app.py).
+  # ============================================================
+
+  UnzipRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'HealthLabOnboardingLambdaRole-${Environment}'
+      RoleName: !Sub 'HealthLab-UnzipRole-${Environment}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -107,7 +114,7 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Policies:
-        - PolicyName: S3AccessPolicy
+        - PolicyName: S3ReadWritePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -116,16 +123,61 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource: !Sub '${IntakeBucket.Arn}/*'
-        - PolicyName: DynamoDBAccessPolicy
+
+  WritePatientRecordRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-WritePatientRecordRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${IntakeBucket.Arn}/*'
+        - PolicyName: DynamoDBWritePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
-                  - dynamodb:GetItem
                   - dynamodb:UpdateItem
                 Resource: !GetAtt PatientRecordsTable.Arn
+
+  VerifyIdentityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-VerifyIdentityRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${IntakeBucket.Arn}/*'
         - PolicyName: RekognitionAccessPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -133,13 +185,13 @@ Resources:
               - Effect: Allow
                 Action: rekognition:CompareFaces
                 Resource: '*'
-        - PolicyName: TextractAccessPolicy
+        - PolicyName: DynamoDBUpdatePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: textract:AnalyzeID
-                Resource: '*'
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt PatientRecordsTable.Arn
         - PolicyName: SNSPublishPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -147,7 +199,69 @@ Resources:
               - Effect: Allow
                 Action: sns:Publish
                 Resource: !Ref OnboardingNotifications
-        - PolicyName: SQSAccessPolicy
+
+  ExtractDetailsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-ExtractDetailsRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${IntakeBucket.Arn}/*'
+        - PolicyName: TextractAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: textract:AnalyzeID
+                Resource: '*'
+        - PolicyName: DynamoDBReadWritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt PatientRecordsTable.Arn
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref OnboardingNotifications
+
+  SubmitEligibilityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-SubmitEligibilityRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: SQSConsumePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -157,6 +271,70 @@ Resources:
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt EligibilityQueue.Arn
+        - PolicyName: DynamoDBUpdatePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt PatientRecordsTable.Arn
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref OnboardingNotifications
+
+  ValidateEligibilityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-ValidateEligibilityRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      # No resource-access policies: this handler is a pure function over its
+      # request body - see src/validate_eligibility/app.py. It never touches
+      # S3, DynamoDB, Rekognition, Textract, SNS, or SQS.
+
+  PatientPortalRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'HealthLab-PatientPortalRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: S3PresignedUploadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${IntakeBucket.Arn}/*'
+        - PolicyName: DynamoDBReadWritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt PatientRecordsTable.Arn
 
   # Lambda functions
   UnzipFunction:
@@ -165,7 +343,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-Unzip-${Environment}'
       CodeUri: src/unzip/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt UnzipRole.Arn
 
   WritePatientRecordFunction:
     Type: AWS::Serverless::Function
@@ -173,7 +351,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-WritePatientRecord-${Environment}'
       CodeUri: src/write_patient_record/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt WritePatientRecordRole.Arn
 
   VerifyIdentityFunction:
     Type: AWS::Serverless::Function
@@ -181,7 +359,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-VerifyIdentity-${Environment}'
       CodeUri: src/verify_identity/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt VerifyIdentityRole.Arn
 
   ExtractDetailsFunction:
     Type: AWS::Serverless::Function
@@ -189,7 +367,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-ExtractDetails-${Environment}'
       CodeUri: src/extract_details/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt ExtractDetailsRole.Arn
 
   SubmitEligibilityFunction:
     Type: AWS::Serverless::Function
@@ -197,7 +375,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-SubmitEligibility-${Environment}'
       CodeUri: src/submit_eligibility/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt SubmitEligibilityRole.Arn
       Environment:
         Variables:
           API_ENDPOINT: !Sub 'https://${EligibilityApi}.execute-api.${AWS::Region}.amazonaws.com'
@@ -214,7 +392,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-ValidateEligibility-${Environment}'
       CodeUri: src/validate_eligibility/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt ValidateEligibilityRole.Arn
       Events:
         ApiEvent:
           Type: HttpApi
@@ -330,7 +508,7 @@ Resources:
       FunctionName: !Sub 'HealthLab-PatientPortal-${Environment}'
       CodeUri: src/patient_portal/
       Handler: app.lambda_handler
-      Role: !GetAtt OnboardingLambdaRole.Arn
+      Role: !GetAtt PatientPortalRole.Arn
       Events:
         RequestUpload:
           Type: HttpApi
