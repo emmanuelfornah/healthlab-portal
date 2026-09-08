@@ -25,6 +25,19 @@ Parameters:
       - prod
     Description: Environment name
 
+  DomainName:
+    Type: String
+    Default: healthlabportal.com
+    Description: Custom domain for the frontend. Leave empty to serve from the default CloudFront domain only.
+
+  HostedZoneId:
+    Type: String
+    Default: Z005943316NNIBXUORQW2
+    Description: Route 53 hosted zone ID for DomainName. Required if DomainName is set.
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+
 Resources:
   # S3 bucket for patient intake documents
   IntakeBucket:
@@ -457,12 +470,12 @@ Resources:
         - COGNITO
       CallbackURLs:
         - http://localhost:5173/
-        - https://healthlabportal.com/
         - !Sub 'https://${FrontendDistribution.DomainName}/'
+        - !If [HasCustomDomain, !Sub 'https://${DomainName}/', !Ref 'AWS::NoValue']
       LogoutURLs:
         - http://localhost:5173/
-        - https://healthlabportal.com/
         - !Sub 'https://${FrontendDistribution.DomainName}/'
+        - !If [HasCustomDomain, !Sub 'https://${DomainName}/', !Ref 'AWS::NoValue']
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
@@ -481,8 +494,8 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - 'http://localhost:5173'
-          - 'https://healthlabportal.com'
           - !Sub 'https://${FrontendDistribution.DomainName}'
+          - !If [HasCustomDomain, !Sub 'https://${DomainName}', !Ref 'AWS::NoValue']
         AllowMethods:
           - GET
           - POST
@@ -589,6 +602,19 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # ACM certs for CloudFront must live in us-east-1 (this stack already
+  # deploys there). DNS-validated via the Route 53 hosted zone directly -
+  # CloudFormation creates the validation record and waits for it itself.
+  FrontendCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
   # WAFv2 web ACL for the frontend. Must be created in us-east-1 for
   # CloudFront scope (this stack already deploys there). Managed here
   # rather than attached out-of-band, so it can't be silently dropped by a
@@ -650,6 +676,13 @@ Resources:
         DefaultRootObject: index.html
         HttpVersion: http2
         WebACLId: !GetAtt FrontendWebAcl.Arn
+        Aliases: !If [HasCustomDomain, [!Ref DomainName], !Ref 'AWS::NoValue']
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref FrontendCertificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
         Origins:
           - Id: FrontendOrigin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
@@ -683,6 +716,20 @@ Resources:
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
+
+  FrontendDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        # Fixed AWS-documented hosted zone ID for any CloudFront distribution
+        # (not account- or distribution-specific).
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt FrontendDistribution.DomainName
+        EvaluateTargetHealth: false
 
   # EventBridge rule to trigger the workflow on intake upload
   IntakeUploadRule:
@@ -977,6 +1024,13 @@ Outputs:
     Value: !Sub 'https://${FrontendDistribution.DomainName}'
     Export:
       Name: !Sub '${AWS::StackName}-FrontendUrl'
+
+  CustomDomainUrl:
+    Condition: HasCustomDomain
+    Description: Custom domain URL for the frontend
+    Value: !Sub 'https://${DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CustomDomainUrl'
 
   OperationalAlarmsTopicArn:
     Description: SNS topic for infra/ops CloudWatch alarms - subscribe an on-call email to this
