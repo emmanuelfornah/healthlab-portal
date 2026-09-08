@@ -29,3 +29,28 @@ describe('isAuthenticated', () => {
     expect(isAuthenticated()).toBe(true)
   })
 })
+
+describe('signIn (PKCE)', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    delete window.location
+    window.location = { href: '' }
+  })
+
+  it('stores a code_verifier and sends a matching S256 code_challenge', async () => {
+    const { signIn } = await import('../auth.js')
+    await signIn()
+
+    const verifier = sessionStorage.getItem('healthlab_pkce_verifier')
+    expect(verifier).toBeTruthy()
+
+    const [, query] = window.location.href.split('?')
+    const params = new URLSearchParams(query)
+    expect(params.get('code_challenge_method')).toBe('S256')
+
+    const expectedDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+    const expectedChallenge = btoa(String.fromCharCode(...new Uint8Array(expectedDigest)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    expect(params.get('code_challenge')).toBe(expectedChallenge)
+  })
+})
