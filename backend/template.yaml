@@ -447,11 +447,43 @@ Resources:
           RequireNumbers: true
           RequireSymbols: true
 
+  # ACM cert for the Cognito Hosted UI's custom domain. Also must be
+  # us-east-1 (Cognito custom domains route through CloudFront internally,
+  # same requirement as the frontend distribution's cert above).
+  CognitoCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Sub 'auth.${DomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub 'auth.${DomainName}'
+          HostedZoneId: !Ref HostedZoneId
+
   PatientUserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
     Properties:
-      Domain: !Sub 'healthlab-patients-${AWS::AccountId}-${Environment}'
+      Domain: !If
+        - HasCustomDomain
+        - !Sub 'auth.${DomainName}'
+        - !Sub 'healthlab-patients-${AWS::AccountId}-${Environment}'
       UserPoolId: !Ref PatientUserPool
+      CustomDomainConfig: !If
+        - HasCustomDomain
+        - CertificateArn: !Ref CognitoCertificate
+        - !Ref 'AWS::NoValue'
+
+  CognitoDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'auth.${DomainName}'
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt PatientUserPoolDomain.CloudFrontDistribution
+        EvaluateTargetHealth: false
 
   PatientUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -1003,7 +1035,10 @@ Outputs:
 
   CognitoHostedUiDomain:
     Description: Cognito Hosted UI domain
-    Value: !Sub 'https://healthlab-patients-${AWS::AccountId}-${Environment}.auth.${AWS::Region}.amazoncognito.com'
+    Value: !If
+      - HasCustomDomain
+      - !Sub 'https://auth.${DomainName}'
+      - !Sub 'https://healthlab-patients-${AWS::AccountId}-${Environment}.auth.${AWS::Region}.amazoncognito.com'
     Export:
       Name: !Sub '${AWS::StackName}-CognitoDomain'
 
