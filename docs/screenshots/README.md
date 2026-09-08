@@ -12,21 +12,24 @@ make sure resource names / green states are visible.
 |---|---|
 | `01_ci_pipeline_green.png` | GitHub repo → **Actions** tab → the CI run with both jobs (Backend, Frontend) green |
 | `02_repo_homepage.png` | Repo homepage showing the README, badges, and topics |
-| `03_pytest_20_passed.png` | Terminal: `pytest -q` showing **20 passed** |
+| `03_pytest_31_passed.png` | Terminal: `pytest -q` showing **31 passed** |
 | `04_sam_validate.png` | Terminal: `sam validate --lint` → "valid SAM Template" |
 | `05_frontend_build.png` | Terminal: `npm run build` succeeding |
 
-## After deployment (activations)
+## Live and deployed
 
 | Filename | What to capture |
 |---|---|
-| `06_cloudformation_complete.png` | CloudFormation stack → CREATE_COMPLETE with resources |
+| `06_cloudformation_complete.png` | CloudFormation stack → UPDATE_COMPLETE with resources |
 | `07_stepfunctions_execution.png` | Step Functions → a successful execution graph (parallel branches green) |
-| `08_cognito_hosted_ui.png` | Cognito Hosted UI sign-in page |
-| `09_live_app.png` | The running app (CloudFront URL / healthlabportal.com) |
-| `10_waf_cloudfront.png` | WAF Web ACL associated with the CloudFront distribution |
-| `11_xray_trace.png` | X-Ray service map / trace of an onboarding run |
-| `12_dynamodb_patient_record.png` | DynamoDB PatientRecords item after a run |
+| `08_cognito_signin.png` | Cognito sign-in page at `auth.healthlabportal.com` (after the Managed Login branding pass) |
+| `09_live_app.png` | The running app at `https://healthlabportal.com` — capture the welcome screen, the upload screen, and a status result as three separate shots if possible |
+| `10_waf_webacl.png` | WAFv2 Web ACL rules + metrics, showing it's attached to the CloudFront distribution |
+| `11_xray_trace.png` | X-Ray service map / trace of a real onboarding run |
+| `12_dynamodb_patient_record.png` | DynamoDB `PatientRecords-dev` item after a run |
+| `13_cloudwatch_dashboard.png` | CloudWatch dashboard `HealthLab-Operations-dev` — workflow, API, Lambda, queue widgets in one view |
+| `14_route53_and_acm.png` | Route 53 hosted zone showing the `healthlabportal.com` / `auth.healthlabportal.com` records, and the ACM certificate showing **Issued** |
+| `15_security_hub_guardduty.png` | (Optional) Security Hub findings dashboard or GuardDuty summary — shows account-level monitoring is real, not just claimed in docs |
 
 ## How to reference in the main README
 
