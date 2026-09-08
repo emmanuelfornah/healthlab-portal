@@ -495,6 +495,178 @@ Resources:
                 Action: states:StartExecution
                 Resource: !GetAtt OnboardingStateMachine.Arn
 
+  # ============================================================
+  # Observability - CloudWatch dashboard + alarms
+  # Separate from OnboardingNotifications (patient/care-team facing):
+  # this topic is for infra/ops signals - subscribe an on-call email here.
+  # ============================================================
+
+  OperationalAlarms:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'OperationalAlarms-${Environment}'
+      DisplayName: HealthLab Operational Alarms
+      KmsMasterKeyId: alias/aws/sns
+
+  StepFunctionsFailedExecutionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-StepFunctionsFailed-${Environment}'
+      AlarmDescription: An onboarding workflow execution failed
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !GetAtt OnboardingStateMachine.Arn
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  EligibilityDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-EligibilityDLQNotEmpty-${Environment}'
+      AlarmDescription: A message landed in the eligibility DLQ - a check exhausted its retries
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EligibilityDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  PatientApi5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-PatientApi5xx-${Environment}'
+      AlarmDescription: Patient API is returning server errors
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref PatientApi
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  WritePatientRecordErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-WritePatientRecordErrors-${Environment}'
+      AlarmDescription: WritePatientRecord threw an unhandled error - nothing downstream can proceed
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WritePatientRecordFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  PatientPortalErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-PatientPortalErrors-${Environment}'
+      AlarmDescription: The patient-facing API Lambda threw an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PatientPortalFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  OperationsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'HealthLab-Operations-${Environment}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric", "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Onboarding workflow executions",
+                "view": "timeSeries", "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${OnboardingStateMachine.Arn}", {"label": "Succeeded"}],
+                  ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${OnboardingStateMachine.Arn}", {"label": "Failed"}]
+                ],
+                "stat": "Sum", "period": 300
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Patient API traffic",
+                "view": "timeSeries", "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", "ApiId", "${PatientApi}", {"label": "Requests"}],
+                  ["AWS/ApiGateway", "4xx", "ApiId", "${PatientApi}", {"label": "4xx"}],
+                  ["AWS/ApiGateway", "5xx", "ApiId", "${PatientApi}", {"label": "5xx"}]
+                ],
+                "stat": "Sum", "period": 300
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda errors by function",
+                "view": "timeSeries", "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/Lambda", "Errors", "FunctionName", "${UnzipFunction}", {"label": "Unzip"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${WritePatientRecordFunction}", {"label": "WritePatientRecord"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${VerifyIdentityFunction}", {"label": "VerifyIdentity"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${ExtractDetailsFunction}", {"label": "ExtractDetails"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${SubmitEligibilityFunction}", {"label": "SubmitEligibility"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${ValidateEligibilityFunction}", {"label": "ValidateEligibility"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${PatientPortalFunction}", {"label": "PatientPortal"}]
+                ],
+                "stat": "Sum", "period": 300
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Eligibility queue depth",
+                "view": "timeSeries", "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${EligibilityQueue.QueueName}", {"label": "Main queue"}],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${EligibilityDeadLetterQueue.QueueName}", {"label": "DLQ"}]
+                ],
+                "stat": "Maximum", "period": 300
+              }
+            }
+          ]
+        }
+
 Outputs:
   IntakeBucketName:
     Description: S3 bucket for patient intake documents
@@ -573,3 +745,13 @@ Outputs:
     Value: !Sub 'https://${FrontendDistribution.DomainName}'
     Export:
       Name: !Sub '${AWS::StackName}-FrontendUrl'
+
+  OperationalAlarmsTopicArn:
+    Description: SNS topic for infra/ops CloudWatch alarms - subscribe an on-call email to this
+    Value: !Ref OperationalAlarms
+    Export:
+      Name: !Sub '${AWS::StackName}-OperationalAlarms'
+
+  DashboardUrl:
+    Description: CloudWatch operations dashboard
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=HealthLab-Operations-${Environment}'
