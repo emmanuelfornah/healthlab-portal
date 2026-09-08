@@ -21,7 +21,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | Point-in-time recovery — DynamoDB | `PointInTimeRecoverySpecification` |
 | Encryption at rest — SQS + DLQ | `SqsManagedSseEnabled` |
 | Encryption at rest — SNS | `KmsMasterKeyId: alias/aws/sns` |
-| Least-privilege IAM | Scoped role: S3, DynamoDB, Rekognition, Textract, SNS, SQS only — no wildcard admin |
+| Least-privilege IAM | Each of the 7 Lambdas has its **own** IAM role scoped to only the actions its own code calls (e.g. `ValidateEligibilityRole` has no AWS resource permissions at all — that handler never touches S3/DynamoDB/etc.), rather than one broad role shared across every function — no wildcard admin anywhere |
 | Authentication | Amazon Cognito User Pool; patient API protected by a Cognito JWT authorizer |
 | PKCE (OAuth) | Frontend's Authorization Code flow uses PKCE (S256) — a leaked authorization code alone isn't redeemable for tokens |
 | Per-patient authorization | `/intake/{id}/status` and `/fhir` are scoped to the requesting patient's Cognito `sub`, recorded when the upload URL is issued — a mismatched owner gets a 404, not another patient's record |
@@ -55,14 +55,47 @@ Steps (console):
 > authorizer and API Gateway throttling; unauthenticated requests are rejected
 > before reaching any Lambda.
 
+### Network segmentation — not applicable here
+
+This backend is Lambda + managed AWS services only (API Gateway, S3,
+DynamoDB, SQS, SNS, Rekognition, Textract) — no Lambda runs inside a VPC,
+and there's no EC2 or RDS to segment with security groups. The classic
+3-tier VPC/security-group model (frontend-sg → backend-sg → db-sg, with
+SSH/RDP locked to an admin IP) doesn't map onto an architecture with no
+VPC-bound compute. The equivalent perimeter controls here are the Cognito
+JWT authorizer at the API layer and per-function least-privilege IAM roles
+at the compute layer (see the table above) — noted explicitly so the
+absence of VPC controls reads as a deliberate architectural fit, not a gap.
+
+### Customer-managed KMS keys — considered, not adopted
+
+Everything is encrypted at rest (see table above) using AWS-managed keys
+(SSE-S3 / `alias/aws/*`) rather than a customer-managed key (CMK). A CMK
+would add a key policy scoping exactly which roles can use it, rotation
+control, and the ability to revoke access at the key level independent of
+IAM. Deliberately not adopted: it's a small recurring cost (~$1/month) for
+a capability — independent key-level access revocation — this project
+doesn't currently need, since per-function IAM roles already scope access
+tightly. Worth revisiting if this needs to satisfy a real audit rather than
+demonstrate the pattern.
+
 ### Account-level threat detection & monitoring
 
 Enable once per account (console), shared across all projects:
 - **Amazon GuardDuty** — threat detection
 - **AWS CloudTrail** — API activity audit trail
-- **AWS Config** — configuration compliance
-- **AWS Security Hub** — centralized findings
+- **AWS Config** — configuration compliance. At minimum, enable these
+  managed rules against the two S3 buckets:
+  - `s3-bucket-server-side-encryption-enabled`
+  - `s3-bucket-public-read-prohibited`
+
+  (`restricted-ssh` doesn't apply — no EC2/SSH anywhere in this stack.)
+- **AWS Security Hub** — aggregates GuardDuty/Inspector/Macie/Config findings
+  into one dashboard
 - **MFA** on all console/IAM users
+- **IAM Policy Simulator** — validate each Lambda role's actual permissions
+  match what's documented above (e.g. confirm `ValidateEligibilityRole`
+  really can't reach S3/DynamoDB) before trusting the template alone
 
 ## HIPAA Security Rule — technical safeguards mapping
 
@@ -88,6 +121,17 @@ Enable once per account (console), shared across all projects:
 | Integrity | DynamoDB SSE + point-in-time recovery; S3 SSE; workflow only ever merges records via `update_item`, never blind-overwrites |
 | Person or entity authentication | Amazon Cognito User Pool (password policy: 8+ chars, upper/lower/number/symbol), JWT authorizer on every protected route |
 | Transmission security | HTTPS enforced end-to-end — API Gateway, CloudFront, S3 presigned URLs; PKCE on the OAuth flow protects the auth handshake itself |
+
+## Threat model (STRIDE)
+
+| Threat | Example, specific to this app | Mitigating control |
+|---|---|---|
+| **S**poofing | Forged/expired JWT presented to the Patient API; authorization code stolen mid-sign-in | Cognito JWT authorizer validates signature/issuer/audience before any Lambda runs; PKCE (S256) prevents a stolen authorization code from being redeemed by anyone but the browser that requested it |
+| **T**ampering | A patient's `intake_id` leaks (screenshot, log, referrer) and is used to view or alter another patient's record | `PATIENT_SUB` ownership check on `/status` and `/fhir`; `write_patient_record` merges via `update_item`, never a blind overwrite that could erase ownership |
+| **R**epudiation | Dispute over whether an identity/eligibility check ran, or what it returned | Structured Powertools logs + X-Ray tracing on every Lambda and the state machine; an SNS notification fires on every failed check, creating a record independent of the DynamoDB row |
+| **I**nformation disclosure | Intake ZIP (ID photo, selfie, PII) intercepted in transit, or read from storage by an unauthorized principal | TLS end-to-end (API Gateway, CloudFront, presigned URLs); S3/DynamoDB/SQS/SNS encrypted at rest; per-function IAM roles limit what a compromised Lambda could actually read |
+| **D**enial of service | A flood of upload or API requests drives up cost or exhausts downstream capacity | API Gateway default throttling; 300s presigned-URL expiry; SQS + DLQ (`maxReceiveCount: 5`) absorbs eligibility-check bursts without cascading Lambda retries; WAF rate-based rule (console, see above) |
+| **E**levation of privilege | A compromised Lambda (e.g. a vulnerable dependency) is used to pivot into other AWS resources | Per-function least-privilege IAM roles — e.g. a compromised `ValidateEligibilityFunction` has zero AWS resource permissions to pivot with, by design |
 
 ## Incident response (summary)
 
