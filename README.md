@@ -12,8 +12,7 @@ event-driven workflow runs those checks in parallel — establishing whether the
 patient is eligible (insurance/coverage) before lab test orders proceed, then
 records the outcome for the care team.
 
-**🔗 Live demo:** https://d2c5pbxl48x23.cloudfront.net *(dev environment,
-default AWS URLs — a custom domain is in progress)*
+**🔗 Live demo:** https://healthlabportal.com
 
 > **Scope & honesty note.** This is a portfolio/demonstration project. It
 > follows HIPAA-aligned patterns (encryption at rest, least-privilege IAM,
@@ -189,9 +188,10 @@ long-lived AWS credentials stored anywhere. The backend job runs
 `sam build && sam deploy`; the frontend job builds against the live stack's
 outputs and syncs to S3 + CloudFront.
 
-Currently live on the default AWS URLs (`*.cloudfront.net` /
-`*.execute-api.*.amazonaws.com`) in a `dev` environment. The custom domain
-**healthlabportal.com** (Route 53 + ACM + CloudFront) is the next step.
+Live at **[healthlabportal.com](https://healthlabportal.com)** — Route 53 +
+a DNS-validated ACM certificate + CloudFront, currently backing a `dev`
+environment stack. The API still runs on its default
+`*.execute-api.*.amazonaws.com` endpoint.
 
 ## Roadmap
 
