@@ -12,23 +12,28 @@ event-driven workflow runs those checks in parallel — establishing whether the
 patient is eligible (insurance/coverage) before lab test orders proceed, then
 records the outcome for the care team.
 
+**🔗 Live demo:** https://d2c5pbxl48x23.cloudfront.net *(dev environment,
+default AWS URLs — a custom domain is in progress)*
+
 > **Scope & honesty note.** This is a portfolio/demonstration project. It
 > follows HIPAA-aligned patterns (encryption at rest, least-privilege IAM,
 > private storage, audit-friendly workflow) but is **not** a HIPAA-certified
 > system and should not process real PHI. The insurance eligibility service is a
 > **mock** stand-in for a real payer/clearinghouse API. Everything described
-> below is implemented and tested locally; see [Testing](#testing).
+> below is implemented, tested, deployed, and verified end-to-end against the
+> live stack; see [Testing](#testing) and [Deployment](#deployment).
 
 ---
 
 ## Architecture
 
 ```
-Patient ─► Cognito Hosted UI (sign in) ─► JWT
-        ─► React SPA (Vite)
+Patient ─► CloudFront + S3 (React SPA, private bucket via Origin Access Control)
+        ─► Cognito Hosted UI (sign in, Authorization Code flow + PKCE) ─► JWT
         ─► Patient API (API Gateway HTTP API, Cognito JWT authorizer)
-             ├─ POST /intake/upload-url        presigned S3 upload URL
-             └─ GET  /intake/{id}/status       onboarding status
+             ├─ POST /intake/upload-url         presigned S3 upload URL
+             ├─ GET  /intake/{id}/status        onboarding status
+             └─ GET  /intake/{id}/fhir          FHIR R4 Patient + Coverage bundle
         ─► PUT intake bundle ─► S3 (encrypted, EventBridge enabled)
               └─ EventBridge (intake/ prefix) ─► Step Functions
                    ├─ UnzipIntake
@@ -45,7 +50,8 @@ Patient ─► Cognito Hosted UI (sign in) ─► JWT
 | Layer | Technology |
 |---|---|
 | Frontend | React 19 + Vite (single-page patient portal) |
-| Auth | Amazon Cognito User Pool + Hosted UI (Authorization Code flow) |
+| Frontend hosting | S3 (private) + CloudFront (Origin Access Control) |
+| Auth | Amazon Cognito User Pool + Hosted UI (Authorization Code flow + PKCE) |
 | API | Amazon API Gateway (HTTP API) with a Cognito JWT authorizer |
 | Compute | AWS Lambda (Python 3.13), 7 functions |
 | Orchestration | AWS Step Functions (parallel validation branches) |
@@ -54,6 +60,7 @@ Patient ─► Cognito Hosted UI (sign in) ─► JWT
 | Messaging | Amazon SQS (+ dead-letter queue), Amazon SNS |
 | Storage | Amazon S3 (encrypted, private), Amazon DynamoDB |
 | IaC | AWS SAM |
+| CI/CD | GitHub Actions, OIDC-authenticated deploy (no stored AWS credentials) |
 | Observability | AWS X-Ray active tracing, structured logs (Lambda Powertools) |
 | Testing | pytest, moto, Hypothesis (property-based) |
 
@@ -61,6 +68,9 @@ Patient ─► Cognito Hosted UI (sign in) ─► JWT
 
 ```
 healthlab-portal/
+├── .github/workflows/
+│   ├── ci.yml                        # lint, test, build - every push/PR
+│   └── deploy.yml                    # OIDC deploy to AWS - after CI passes on main
 ├── backend/
 │   ├── template.yaml                 # SAM stack (all AWS resources)
 │   ├── statemachine/
@@ -141,30 +151,47 @@ assert invariants across generated inputs.
 | Suite | What it covers |
 |---|---|
 | `tests/unit/test_unzip.py` | intake extraction + file-count validation |
-| `tests/unit/test_write_patient_record.py` | CSV → DynamoDB record |
+| `tests/unit/test_write_patient_record.py` | CSV → DynamoDB record, preserves patient ownership on merge |
 | `tests/unit/test_validate_eligibility.py` | eligibility mock responses |
-| `tests/unit/test_patient_portal.py` | auth gate, presigned URL, status lookup |
+| `tests/unit/test_patient_portal.py` | auth gate, presigned URL, status/FHIR lookups scoped to the requesting patient |
+| `tests/unit/test_extract_details.py` | Textract field reconciliation, including the empty-extraction edge case |
+| `tests/unit/test_verify_identity.py` | Rekognition face-match verification and failure handling |
+| `tests/unit/test_fhir.py` | FHIR R4 Patient/Coverage mapping |
 | `tests/property/test_eligibility_properties.py` | eligibility invariants (Hypothesis) |
 
-All 14 tests pass locally; `sam validate --lint` passes; the frontend builds,
-lints clean, and its auth tests pass.
+All 31 tests pass locally; `sam validate --lint` passes; the frontend builds,
+lints clean, and its auth tests pass. The full pipeline has also been driven
+end-to-end against the live deployment (Cognito login → S3 upload → Step
+Functions execution → status/FHIR lookup), not just unit-tested.
 
 ## Security notes
 
 - Cognito JWT authorizer protects the patient API; the patient identity is read
-  from verified token claims.
+  from verified token claims, and every record lookup (`/status`, `/fhir`) is
+  scoped to that patient — a mismatched owner returns 404.
+- The frontend's OAuth Authorization Code flow uses PKCE (S256), so a leaked
+  authorization code alone isn't redeemable for tokens.
 - S3 intake bucket is private (all public access blocked) and encrypted at rest;
   uploads use short-lived presigned URLs.
+- The frontend is served from a private S3 bucket through CloudFront via
+  Origin Access Control — no public bucket access.
 - Each Lambda uses a scoped IAM role (S3, DynamoDB, Rekognition, Textract, SNS,
   SQS) — no wildcard admin access, no long-lived credentials in code.
 - No secrets or AWS account identifiers are committed to the repository.
 
-## Deployment (planned)
+## Deployment
 
-The stack deploys with `sam build && sam deploy`. The frontend is intended to be
-hosted on S3 + CloudFront behind the custom domain **healthlabportal.com**
-(Route 53 + ACM). Deployment and live hosting are the next step and are not yet
-completed.
+The stack deploys via GitHub Actions
+([`deploy.yml`](.github/workflows/deploy.yml)) after the CI quality gate
+passes on `main`, or on demand. Authentication uses GitHub's OIDC provider —
+the workflow assumes an IAM role scoped to this exact repository, with no
+long-lived AWS credentials stored anywhere. The backend job runs
+`sam build && sam deploy`; the frontend job builds against the live stack's
+outputs and syncs to S3 + CloudFront.
+
+Currently live on the default AWS URLs (`*.cloudfront.net` /
+`*.execute-api.*.amazonaws.com`) in a `dev` environment. The custom domain
+**healthlabportal.com** (Route 53 + ACM + CloudFront) is the next step.
 
 ## Roadmap
 
