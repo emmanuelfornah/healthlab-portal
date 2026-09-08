@@ -57,6 +57,24 @@ Resources:
         EventBridgeConfiguration:
           EventBridgeEnabled: true
 
+  IntakeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref IntakeBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt IntakeBucket.Arn
+              - !Sub '${IntakeBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
   # DynamoDB table for patient records
   PatientRecordsTable:
     Type: AWS::DynamoDB::Table
@@ -748,6 +766,16 @@ Resources:
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt FrontendBucket.Arn
+              - !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
 
   FrontendDnsRecord:
     Type: AWS::Route53::RecordSet
