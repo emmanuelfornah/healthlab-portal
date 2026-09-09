@@ -464,6 +464,17 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: true
+      # Sends sign-up/verification email through the verified SES domain
+      # identity instead of Cognito's default sender (COGNITO_DEFAULT),
+      # which is testing-only: a shared 50/day quota and poor deliverability
+      # since it has no SPF/DKIM alignment with recipient inboxes. Falls
+      # back to the default sender if no custom domain is configured.
+      EmailConfiguration: !If
+        - HasCustomDomain
+        - EmailSendingAccount: DEVELOPER
+          SourceArn: !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}'
+          From: !Sub 'HealthLab Portal <no-reply@${DomainName}>'
+        - !Ref 'AWS::NoValue'
 
   # ACM cert for the Cognito Hosted UI's custom domain. Also must be
   # us-east-1 (Cognito custom domains route through CloudFront internally,
