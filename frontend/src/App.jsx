@@ -1,12 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
+import JSZip from 'jszip'
 import './App.css'
 import { signIn, signOut, isAuthenticated, handleRedirectCallback } from './auth'
 import { requestUploadUrl, uploadIntakeBundle, getStatus } from './api'
 
+// Bundles the three picked files into a ZIP client-side, matching exactly
+// what the backend's unzip Lambda expects (three files, suffix-matched
+// names) - the patient never has to know a ZIP is involved at all.
+async function buildIntakeZip({ formFile, idFile, selfieFile }) {
+  const zip = new JSZip()
+  zip.file('bundle_intake.csv', formFile)
+  zip.file('bundle_id.png', idFile)
+  zip.file('bundle_selfie.png', selfieFile)
+  return zip.generateAsync({ type: 'blob' })
+}
+
 function App() {
   const [authed, setAuthed] = useState(false)
   const [ready, setReady] = useState(false)
-  const [file, setFile] = useState(null)
+  const [formFile, setFormFile] = useState(null)
+  const [idFile, setIdFile] = useState(null)
+  const [selfieFile, setSelfieFile] = useState(null)
   const [intakeId, setIntakeId] = useState(null)
   const [status, setStatus] = useState(null)
   const [message, setMessage] = useState(null)
@@ -26,21 +40,23 @@ function App() {
 
   const handleUpload = useCallback(async (e) => {
     e.preventDefault()
-    if (!file) {
-      setMessage({ type: 'error', text: 'Choose an intake bundle (.zip) first.' })
+    if (!formFile || !idFile || !selfieFile) {
+      setMessage({ type: 'error', text: 'Please choose all three files.' })
       return
     }
-    setMessage({ type: 'pending', text: 'Requesting secure upload URL…' })
+    setMessage({ type: 'pending', text: 'Preparing your documents…' })
     try {
+      const zipBlob = await buildIntakeZip({ formFile, idFile, selfieFile })
+      setMessage({ type: 'pending', text: 'Requesting secure upload URL…' })
       const { intake_id, upload_url } = await requestUploadUrl()
-      setMessage({ type: 'pending', text: 'Uploading intake bundle…' })
-      await uploadIntakeBundle(upload_url, file)
+      setMessage({ type: 'pending', text: 'Uploading your documents…' })
+      await uploadIntakeBundle(upload_url, zipBlob)
       setIntakeId(intake_id)
       setMessage({ type: 'success', text: `Intake submitted. Reference: ${intake_id}` })
     } catch {
       setMessage({ type: 'error', text: 'Upload failed. Please try again.' })
     }
-  }, [file])
+  }, [formFile, idFile, selfieFile])
 
   const checkStatus = useCallback(async () => {
     if (!intakeId) return
@@ -73,15 +89,33 @@ function App() {
         <section className="card">
           <h2>Submit intake documents</h2>
           <p>
-            Upload a ZIP bundle containing your intake form (CSV), a photo of your
-            ID, and a selfie.
+            Upload your intake form, a photo of your ID, and a selfie below.
           </p>
-          <form onSubmit={handleUpload}>
-            <input
-              type="file"
-              accept=".zip"
-              onChange={(e) => setFile(e.target.files[0])}
-            />
+          <form onSubmit={handleUpload} className="upload-form">
+            <label>
+              Intake form (CSV)
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setFormFile(e.target.files[0])}
+              />
+            </label>
+            <label>
+              ID photo
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setIdFile(e.target.files[0])}
+              />
+            </label>
+            <label>
+              Selfie
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setSelfieFile(e.target.files[0])}
+              />
+            </label>
             <button className="primary-btn" type="submit">Submit intake</button>
           </form>
 

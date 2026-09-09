@@ -44,6 +44,15 @@
   color: var(--hl-accent);
 }
 
+/* Upload form: one labeled file input per document */
+.upload-form label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--hl-text);
+  margin-top: 0.75rem;
+}
+
 /* Inputs */
 input[type="file"] {
   display: block;
