@@ -30,6 +30,7 @@ make sure resource names / green states are visible.
 | `13_cloudwatch_dashboard.png` | CloudWatch dashboard `HealthLab-Operations-dev` — workflow, API, Lambda, queue widgets in one view |
 | `14_route53_and_acm.png` | Route 53 hosted zone showing the `healthlabportal.com` / `auth.healthlabportal.com` records, and the ACM certificate showing **Issued** |
 | `15_security_hub_guardduty.png` | (Optional) Security Hub findings dashboard or GuardDuty summary — shows account-level monitoring is real, not just claimed in docs |
+| `16_iam_policy_simulator.png` | IAM Policy Simulator — `HealthLab-ValidateEligibilityRole-dev` denied on S3/DynamoDB/Rekognition (proves it holds zero resource access), and/or `HealthLab-VerifyIdentityRole-dev` allowed on Rekognition but denied on Textract (proves per-function scoping, not just an empty role) |
 
 ## How to reference in the main README
 
