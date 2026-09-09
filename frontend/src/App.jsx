@@ -105,6 +105,7 @@ function App() {
               <input
                 type="file"
                 accept="image/*"
+                capture="environment"
                 onChange={(e) => setIdFile(e.target.files[0])}
               />
             </label>
@@ -113,6 +114,7 @@ function App() {
               <input
                 type="file"
                 accept="image/*"
+                capture="user"
                 onChange={(e) => setSelfieFile(e.target.files[0])}
               />
             </label>
