@@ -4,12 +4,31 @@ import './App.css'
 import { signIn, signOut, isAuthenticated, handleRedirectCallback } from './auth'
 import { requestUploadUrl, uploadIntakeBundle, getStatus } from './api'
 
-// Bundles the three picked files into a ZIP client-side, matching exactly
-// what the backend's unzip Lambda expects (three files, suffix-matched
-// names) - the patient never has to know a ZIP is involved at all.
-async function buildIntakeZip({ formFile, idFile, selfieFile }) {
+const INTAKE_CSV_HEADERS = [
+  'MEMBER_ID', 'FIRST_NAME', 'LAST_NAME', 'DATE_OF_BIRTH',
+  'ADDRESS', 'STATE_IN_ADDRESS', 'CITY_IN_ADDRESS',
+  'ZIP_CODE_IN_ADDRESS', 'INSURANCE_PROVIDER',
+]
+
+// Turns the typed-in intake fields into the same one-row CSV the backend's
+// write_patient_record Lambda already parses - so typing "wrong" details on
+// purpose (to see a details-mismatch review) needs no backend change at all.
+function toIntakeCsv(fields) {
+  const row = [
+    fields.memberId, fields.firstName, fields.lastName, fields.dateOfBirth,
+    fields.address, fields.state, fields.city, fields.zip, fields.insuranceProvider,
+  ]
+  const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  return `${INTAKE_CSV_HEADERS.join(',')}\n${row.map(escape).join(',')}\n`
+}
+
+// Bundles the intake fields (as CSV) and the two picked photos into a ZIP
+// client-side, matching exactly what the backend's unzip Lambda expects
+// (three files, suffix-matched names) - the patient never has to know a
+// ZIP or a CSV is involved at all.
+async function buildIntakeZip({ formFields, idFile, selfieFile }) {
   const zip = new JSZip()
-  zip.file('bundle_intake.csv', formFile)
+  zip.file('bundle_intake.csv', toIntakeCsv(formFields))
   zip.file('bundle_id.png', idFile)
   zip.file('bundle_selfie.png', selfieFile)
   return zip.generateAsync({ type: 'blob' })
@@ -18,7 +37,17 @@ async function buildIntakeZip({ formFile, idFile, selfieFile }) {
 function App() {
   const [authed, setAuthed] = useState(false)
   const [ready, setReady] = useState(false)
-  const [formFile, setFormFile] = useState(null)
+  const [formFields, setFormFields] = useState({
+    memberId: '',
+    firstName: '',
+    lastName: '',
+    dateOfBirth: '',
+    address: '',
+    city: '',
+    state: '',
+    zip: '',
+    insuranceProvider: '',
+  })
   const [idFile, setIdFile] = useState(null)
   const [selfieFile, setSelfieFile] = useState(null)
   const [intakeId, setIntakeId] = useState(null)
@@ -38,15 +67,21 @@ function App() {
     })()
   }, [])
 
+  const updateField = useCallback((key) => (e) => {
+    const value = e.target.value
+    setFormFields((fields) => ({ ...fields, [key]: value }))
+  }, [])
+
   const handleUpload = useCallback(async (e) => {
     e.preventDefault()
-    if (!formFile || !idFile || !selfieFile) {
-      setMessage({ type: 'error', text: 'Please choose all three files.' })
+    const missingField = Object.entries(formFields).some(([, v]) => !v.trim())
+    if (missingField || !idFile || !selfieFile) {
+      setMessage({ type: 'error', text: 'Please fill in every field and attach both photos.' })
       return
     }
     setMessage({ type: 'pending', text: 'Preparing your documents…' })
     try {
-      const zipBlob = await buildIntakeZip({ formFile, idFile, selfieFile })
+      const zipBlob = await buildIntakeZip({ formFields, idFile, selfieFile })
       setMessage({ type: 'pending', text: 'Requesting secure upload URL…' })
       const { intake_id, upload_url } = await requestUploadUrl()
       setMessage({ type: 'pending', text: 'Uploading your documents…' })
@@ -56,7 +91,7 @@ function App() {
     } catch {
       setMessage({ type: 'error', text: 'Upload failed. Please try again.' })
     }
-  }, [formFile, idFile, selfieFile])
+  }, [formFields, idFile, selfieFile])
 
   const checkStatus = useCallback(async () => {
     if (!intakeId) return
@@ -89,17 +124,48 @@ function App() {
         <section className="card">
           <h2>Submit intake documents</h2>
           <p>
-            Upload your intake form, a photo of your ID, and a selfie below.
+            Enter your intake details, then attach a photo of your ID and a selfie.
           </p>
           <form onSubmit={handleUpload} className="upload-form">
-            <label>
-              Intake form (CSV)
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => setFormFile(e.target.files[0])}
-              />
-            </label>
+            <fieldset className="intake-fields">
+              <legend>Intake details</legend>
+              <label>
+                Member ID
+                <input type="text" value={formFields.memberId} onChange={updateField('memberId')} />
+              </label>
+              <label>
+                First name
+                <input type="text" value={formFields.firstName} onChange={updateField('firstName')} />
+              </label>
+              <label>
+                Last name
+                <input type="text" value={formFields.lastName} onChange={updateField('lastName')} />
+              </label>
+              <label>
+                Date of birth
+                <input type="date" value={formFields.dateOfBirth} onChange={updateField('dateOfBirth')} />
+              </label>
+              <label>
+                Address
+                <input type="text" value={formFields.address} onChange={updateField('address')} />
+              </label>
+              <label>
+                City
+                <input type="text" value={formFields.city} onChange={updateField('city')} />
+              </label>
+              <label>
+                State
+                <input type="text" value={formFields.state} onChange={updateField('state')} />
+              </label>
+              <label>
+                ZIP code
+                <input type="text" value={formFields.zip} onChange={updateField('zip')} />
+              </label>
+              <label>
+                Insurance provider
+                <input type="text" value={formFields.insuranceProvider} onChange={updateField('insuranceProvider')} />
+              </label>
+            </fieldset>
             <label>
               ID photo
               <input

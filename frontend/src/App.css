@@ -65,6 +65,46 @@ input[type="file"] {
   color: var(--hl-muted);
 }
 
+input[type="text"],
+input[type="date"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  margin: 0.4rem 0 0.9rem;
+  border: 1.5px solid var(--hl-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--hl-text);
+  font-size: 0.95rem;
+}
+input[type="text"]:focus,
+input[type="date"]:focus {
+  outline: none;
+  border-color: var(--hl-accent);
+}
+
+/* Intake fields: two columns on wider screens, one on mobile */
+.intake-fields {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 1.25rem;
+  border: none;
+  padding: 0;
+  margin: 0.75rem 0 1.5rem;
+}
+.intake-fields legend {
+  grid-column: 1 / -1;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--hl-text);
+  padding: 0;
+  margin-bottom: 0.25rem;
+}
+@media (max-width: 560px) {
+  .intake-fields { grid-template-columns: 1fr; }
+}
+
 /* Buttons */
 .primary-btn {
   background: var(--hl-primary);
