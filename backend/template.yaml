@@ -56,6 +56,17 @@ Resources:
       NotificationConfiguration:
         EventBridgeConfiguration:
           EventBridgeEnabled: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - 'http://localhost:5173'
+              - !Sub 'https://${FrontendDistribution.DomainName}'
+              - !If [HasCustomDomain, !Sub 'https://${DomainName}', !Ref 'AWS::NoValue']
+            AllowedMethods:
+              - PUT
+            AllowedHeaders:
+              - '*'
+            MaxAge: 3000
 
   IntakeBucketPolicy:
     Type: AWS::S3::BucketPolicy
