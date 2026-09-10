@@ -26,22 +26,65 @@ records the outcome for the care team.
 
 ## Architecture
 
-```
-Patient ─► CloudFront + S3 (React SPA, private bucket via Origin Access Control)
-        ─► Cognito Hosted UI (sign in, Authorization Code flow + PKCE) ─► JWT
-        ─► Patient API (API Gateway HTTP API, Cognito JWT authorizer)
-             ├─ POST /intake/upload-url         presigned S3 upload URL
-             ├─ GET  /intake/{id}/status        onboarding status
-             └─ GET  /intake/{id}/fhir          FHIR R4 Patient + Coverage bundle
-        ─► PUT intake bundle ─► S3 (encrypted, EventBridge enabled)
-              └─ EventBridge (intake/ prefix) ─► Step Functions
-                   ├─ UnzipIntake
-                   ├─ WritePatientRecord ─► DynamoDB
-                   ├─ Parallel:
-                   │     ├─ VerifyIdentity   (Amazon Rekognition)
-                   │     └─ ExtractDetails   (Amazon Textract AnalyzeID)
-                   └─ SubmitEligibilityCheck ─► SQS ─► ValidateEligibility (mock API)
-                         └─ SNS notification on any failed check
+```mermaid
+flowchart TD
+    Patient([Patient - Browser])
+
+    subgraph L1["1 · Frontend Delivery"]
+        direction LR
+        WAF[AWS WAF] -.protects.- CF[CloudFront]
+        CF --> SiteS3[(S3 Site Bucket<br/>private, OAC)]
+    end
+
+    subgraph L2["2 · Auth and API"]
+        direction LR
+        Cognito[Cognito Hosted UI<br/>Auth Code + PKCE]
+        APIGW[API Gateway HTTP<br/>Patient API]
+        Portal[Lambda: PatientPortal<br/>upload-url / status / fhir]
+        Cognito -->|JWT| APIGW --> Portal
+    end
+
+    subgraph L3["3 · Upload and Trigger"]
+        direction LR
+        IntakeS3[(S3 Intake Bucket<br/>encrypted)]
+        EB{{EventBridge}}
+        IntakeS3 --> EB
+    end
+
+    subgraph L4["4 · Step Functions - Onboarding Workflow"]
+        direction TB
+        Unzip[Lambda: UnzipIntake]
+        Write[Lambda: WritePatientRecord]
+        subgraph Par[" "]
+            direction LR
+            Verify[Lambda: VerifyIdentity] --> Rek[Rekognition<br/>CompareFaces]
+            Extract[Lambda: ExtractDetails] --> Tex[Textract<br/>AnalyzeID]
+        end
+        SQS[(SQS + DLQ)]
+        Elig[Lambda: SubmitEligibility]
+        Mock[[Mock Eligibility API]]
+        Unzip --> Write --> Par
+        Par --> SQS --> Elig --> Mock
+    end
+
+    DDB[(DynamoDB<br/>each step updates its own field)]
+
+    subgraph L5["5 · Notifications"]
+        direction LR
+        SNS([SNS]) --> Care([Care team email])
+    end
+
+    Patient -->|sign in| Cognito
+    Patient -->|direct upload, presigned URL| IntakeS3
+    Portal -->|status / fhir| DDB
+    EB --> Unzip
+    Write -.-> DDB
+    Verify -.-> DDB
+    Extract -.-> DDB
+    Elig -.-> DDB
+    L4 -->|any failed check| SNS
+
+    style DDB fill:#4a5fc1,color:#fff
 ```
 
 ## Tech stack
