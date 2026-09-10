@@ -35,6 +35,11 @@ Parameters:
     Default: Z005943316NNIBXUORQW2
     Description: Route 53 hosted zone ID for DomainName. Required if DomainName is set.
 
+  NotificationEmail:
+    Type: String
+    Default: emmanuelfornah82@gmail.com
+    Description: Email address to receive care-team review notifications (failed identity/detail/eligibility checks)
+
 Conditions:
   HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
 
@@ -113,6 +118,16 @@ Resources:
       TopicName: !Sub 'OnboardingNotifications-${Environment}'
       DisplayName: HealthLab Onboarding Notifications
       KmsMasterKeyId: alias/aws/sns
+
+  # Without a subscription, every sns:Publish call from VerifyIdentity/
+  # ExtractDetails/SubmitEligibility succeeds but has nowhere to deliver to -
+  # this is what actually gets the review notification to a person.
+  OnboardingNotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OnboardingNotifications
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
 
   # SQS queue for insurance eligibility checks
   EligibilityQueue:
