@@ -32,6 +32,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | WAF on the frontend | `AWS::WAFv2::WebACL` (Core rule set + Known Bad Inputs managed rule groups, plus a 1,000 req/5min per-IP rate limit) attached directly to the CloudFront distribution's `WebACLId` |
 | TLS-only S3 access | Both S3 bucket policies (intake bucket, frontend bucket) explicitly `Deny` any request where `aws:SecureTransport` is `false` — belt-and-suspenders on top of everything already being HTTPS in practice |
 | No secrets in VCS | No credentials or account IDs committed; `.env` gitignored |
+| No Lambda Function URLs | None of the 7 Lambdas has a `FunctionUrlConfig` — every invocation path goes through API Gateway (JWT-authorized) or an internal event source (S3/EventBridge/SQS/Step Functions), never a directly-invokable public URL |
 
 ## Applied in the console (edge / account level)
 
@@ -91,8 +92,8 @@ the last review:
 | **AWS CloudTrail** — multi-region trail, S3-delivered, log file validation on (beyond the account's default 90-day event history) | ✅ Enabled |
 | **AWS Security Hub** — aggregates GuardDuty/Inspector/Macie/Config findings into one dashboard, default standards on | ✅ Enabled |
 | **AWS Config** — scoped to `AWS::S3::Bucket` only (not `allSupported`, to avoid recording every resource type account-wide), with `s3-bucket-server-side-encryption-enabled` and `s3-bucket-public-read-prohibited` rules (`restricted-ssh` doesn't apply — no EC2/SSH anywhere in this stack) | ✅ Enabled |
-| **MFA** on all console/IAM users | ⚠️ Partial — verify every IAM user with console access has MFA before treating this as done |
-| **IAM Policy Simulator** validation of the per-function roles | ⬜ Not yet run |
+| **MFA** on all console/IAM users | ⚠️ Not yet enforced — requires enrolling a physical/virtual MFA device per IAM user (a console action, not something CI/IaC can do), then attaching a deny-without-MFA IAM policy. Known gap, tracked below rather than left unstated. |
+| **IAM Policy Simulator** validation of the per-function roles | ⬜ Not yet run — requires manually running each of the 7 roles through the console simulator and capturing evidence; tracked below |
 
 (AWS WAF moved to the "Enforced in code" table above — see the note further up.)
 
@@ -136,6 +137,19 @@ in VCS" rule above).
 | **I**nformation disclosure | Intake ZIP (ID photo, selfie, PII) intercepted in transit, or read from storage by an unauthorized principal | TLS end-to-end (API Gateway, CloudFront, presigned URLs); S3/DynamoDB/SQS/SNS encrypted at rest; per-function IAM roles limit what a compromised Lambda could actually read |
 | **D**enial of service | A flood of upload or API requests drives up cost or exhausts downstream capacity | API Gateway default throttling; 300s presigned-URL expiry; SQS + DLQ (`maxReceiveCount: 5`) absorbs eligibility-check bursts without cascading Lambda retries; WAF rate-based rule (console, see above) |
 | **E**levation of privilege | A compromised Lambda (e.g. a vulnerable dependency) is used to pivot into other AWS resources | Per-function least-privilege IAM roles — e.g. a compromised `ValidateEligibilityFunction` has zero AWS resource permissions to pivot with, by design |
+
+## Known limitations (tracked honestly, not silently deferred)
+
+These are real gaps, listed with the reasoning for not closing them yet
+rather than presenting a false "done" state.
+
+| Gap | Why it's not closed yet | What closing it looks like |
+|---|---|---|
+| MFA not yet enforced on IAM users | Requires enrolling a device per user through the console — a personal action, not an IaC change | Enroll each console user's MFA device, then attach a deny-without-MFA policy: `"Condition": {"BoolIfExists": {"aws:MultiFactorAuthPresent": "false"}}` on a statement denying everything except the MFA self-service actions |
+| IAM Policy Simulator evidence not captured | Requires manually running each of the 7 roles through the console simulator and screenshotting the result — not automatable from this repo | Run each role against the actions its own Lambda calls (and a few it shouldn't have, e.g. `s3:DeleteBucket`) via the console simulator; save results under `/docs/iam-validation/` |
+| CloudWatch log retention not explicitly set | Every Lambda's log group already exists (auto-created on first invocation, outside CloudFormation). Adding a managed `AWS::Logs::LogGroup` resource with the same name now risks a stack deploy failure ("resource already exists") rather than a clean apply | Before adding the resource: either delete the existing auto-created log groups first (losing historical logs) or import them into the stack via a CloudFormation resource import, then set `RetentionInDays: 2557` (7 years, §164.316) per function |
+| Step Functions `Catch` blocks are generic, not structured | Every `Task` state already has a `Catch` (see `onboarding_workflow.asl.json`) — a failure doesn't produce an opaque "workflow failed," it routes to a named failure state. What's missing is embedding the actual runtime values (e.g. face-match confidence vs. threshold) into that failure output rather than a static message | Have each Lambda's exception path attach the specific failure detail (confidence score, threshold, mismatched field names) to its error output, and reference it in the corresponding `Catch`'s `ResultPath` |
+| No automated end-to-end test in CI | The full pipeline has been verified manually against the live stack (sign-in → upload → Step Functions execution → status), but not on every push. A real E2E test needs a disposable Cognito test user, a synthetic ZIP upload, and cleanup logic — plus new IAM permissions on the deploy role — which is a meaningfully larger scope than a config change | A pytest step in CI that creates a Cognito test user via `admin_create_user`, calls `POST /intake/upload-url`, uploads a synthetic ZIP, polls `GET /intake/{id}/status` until terminal, and asserts a non-`PENDING` outcome — then tears the test user down |
 
 ## Incident response (summary)
 
