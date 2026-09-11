@@ -87,6 +87,49 @@ flowchart TD
     style DDB fill:#4a5fc1,color:#fff
 ```
 
+## Roadmap
+
+The strongest differentiator here is domain-specific, not infrastructure —
+built on clinical laboratory experience, not a generic CRUD idea:
+
+- **Duplicate & redundant lab-order detection.** Flag lab test orders that
+  overlap in their component analytes so physicians avoid redundant draws and
+  billing. Examples:
+  - A glucose ordered separately when a **BMP** or **CMP** (which already
+    include glucose) is also ordered.
+  - A **BMP** later "upgraded" to a **CMP** — the CMP superset already contains
+    the BMP analytes, making the earlier BMP redundant.
+  - Overlapping panels ordered together (e.g. BMP + CMP, where CMP is a superset
+    of BMP + LFT components).
+  - **Time-based redundancy** — tests reordered within a clinically meaningless
+    interval. For example, **HbA1c ordered again within 3 months**: A1c reflects
+    roughly 90 days of average glycemia (red-cell lifespan), so a repeat inside
+    that window adds cost without new clinical information.
+
+  The intent is a rules service combining an **analyte-mapping** layer (resolve
+  each panel to its component analytes to catch overlaps) with a **frequency**
+  layer (flag reorders inside evidence-based minimum intervals) — reducing cost
+  and duplicate specimen collection.
+- **AWS HealthLake** as the production FHIR datastore (this build ships a
+  FHIR R4 mapping layer; HealthLake would provide managed FHIR persistence and
+  query APIs).
+- **Automated end-to-end test in CI** — a scripted run against the live stack
+  (Cognito test user → upload → poll status to a terminal state) on every
+  push to `main`, closing the gap between "verified manually" and "CI
+  verifies it on every deploy." See [SECURITY.md](SECURITY.md#known-limitations-tracked-honestly-not-silently-deferred)
+  for the full list of tracked gaps and why each isn't closed yet.
+
+## Why serverless, not EC2/EKS
+
+Lambda + Step Functions was chosen over ECS/EC2 because the workload is
+bursty and event-driven — a patient submits once, the workflow runs once,
+then compute goes to zero. Paying per-execution rather than per-hour is the
+correct pricing model for this traffic pattern: there's no steady request
+rate to justify an always-on container or a cluster control plane, and the
+five-step onboarding workflow maps directly onto Step Functions' branching
+and retry semantics instead of needing to hand-roll that orchestration in
+application code.
+
 ## Tech stack
 
 | Layer | Technology |
@@ -197,10 +240,11 @@ assert invariants across generated inputs.
 | `tests/unit/test_patient_portal.py` | auth gate, presigned URL, status/FHIR lookups scoped to the requesting patient |
 | `tests/unit/test_extract_details.py` | Textract field reconciliation, including the empty-extraction edge case |
 | `tests/unit/test_verify_identity.py` | Rekognition face-match verification and failure handling |
+| `tests/unit/test_submit_eligibility.py` | overall STATUS rollup (APPROVED/NEEDS_REVIEW) from the three check results |
 | `tests/unit/test_fhir.py` | FHIR R4 Patient/Coverage mapping |
 | `tests/property/test_eligibility_properties.py` | eligibility invariants (Hypothesis) |
 
-All 31 tests pass locally; `sam validate --lint` passes; the frontend builds,
+All 34 tests pass locally; `sam validate --lint` passes; the frontend builds,
 lints clean, and its auth tests pass. The full pipeline has also been driven
 end-to-end against the live deployment (Cognito login → S3 upload → Step
 Functions execution → status/FHIR lookup), not just unit-tested.
@@ -235,37 +279,10 @@ outputs and syncs to S3 + CloudFront.
 
 Live at **[healthlabportal.com](https://healthlabportal.com)** — Route 53 +
 a DNS-validated ACM certificate + CloudFront, currently backing a `dev`
-environment stack. The API still runs on its default
-`*.execute-api.*.amazonaws.com` endpoint.
-
-## Roadmap
-
-Planned extensions (not yet implemented):
-
-- **Duplicate & redundant lab-order detection.** Flag lab test orders that
-  overlap in their component analytes so physicians avoid redundant draws and
-  billing. Examples:
-  - A glucose ordered separately when a **BMP** or **CMP** (which already
-    include glucose) is also ordered.
-  - A **BMP** later "upgraded" to a **CMP** — the CMP superset already contains
-    the BMP analytes, making the earlier BMP redundant.
-  - Overlapping panels ordered together (e.g. BMP + CMP, where CMP is a superset
-    of BMP + LFT components).
-  - **Time-based redundancy** — tests reordered within a clinically meaningless
-    interval. For example, **HbA1c ordered again within 3 months**: A1c reflects
-    roughly 90 days of average glycemia (red-cell lifespan), so a repeat inside
-    that window adds cost without new clinical information.
-
-  The intent is a rules service combining an **analyte-mapping** layer (resolve
-  each panel to its component analytes to catch overlaps) with a **frequency**
-  layer (flag reorders inside evidence-based minimum intervals) — reducing cost
-  and duplicate specimen collection. (Design informed by clinical laboratory
-  experience.)
-- **AWS HealthLake** as the production FHIR datastore (this build ships a
-  FHIR R4 mapping layer; HealthLake would provide managed FHIR persistence and
-  query APIs).
-- **WAF on CloudFront** (managed rules + rate limiting) and account-level threat
-  detection — see [SECURITY.md](SECURITY.md).
+environment stack. The Patient API is likewise served from
+**api.healthlabportal.com** (a regional API Gateway custom domain,
+DNS-validated ACM cert) rather than a raw `*.execute-api.*.amazonaws.com`
+URL.
 
 ## Author
 
