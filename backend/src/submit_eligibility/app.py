@@ -49,10 +49,24 @@ def lambda_handler(event, context):
             eligible = api_result.get("eligible", False)
             logger.info(f"Eligibility result for {intake_id}: {eligible}")
 
+            # This is the last of the three checks to resolve (it always runs
+            # after the parallel identity/details branch completes), so this
+            # is the one place that can compute a final decision instead of
+            # leaving STATUS stuck at the initial "PENDING" forever.
+            patient_record = table.get_item(Key={"INTAKE_ID": intake_id}).get("Item", {})
+            overall_status = (
+                "APPROVED"
+                if patient_record.get("IDENTITY_VERIFIED")
+                and patient_record.get("DETAILS_MATCH")
+                and eligible
+                else "NEEDS_REVIEW"
+            )
+
             table.update_item(
                 Key={"INTAKE_ID": intake_id},
-                UpdateExpression="SET ELIGIBILITY_VERIFIED = :e",
-                ExpressionAttributeValues={":e": eligible},
+                UpdateExpression="SET ELIGIBILITY_VERIFIED = :e, #s = :s",
+                ExpressionAttributeNames={"#s": "STATUS"},
+                ExpressionAttributeValues={":e": eligible, ":s": overall_status},
             )
 
             if not eligible:
