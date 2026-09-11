@@ -148,7 +148,13 @@ function App() {
               </label>
               <label>
                 Date of birth
-                <input type="date" autoComplete="hl-dob" value={formFields.dateOfBirth} onChange={updateField('dateOfBirth')} />
+                <input
+                  type="text"
+                  autoComplete="hl-dob"
+                  placeholder="as printed on your ID, e.g. 01/12/1957"
+                  value={formFields.dateOfBirth}
+                  onChange={updateField('dateOfBirth')}
+                />
               </label>
               <label>
                 Address
