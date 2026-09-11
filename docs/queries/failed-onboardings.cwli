@@ -1,0 +1,13 @@
+# Run against: /aws/lambda/HealthLab-* (select all 7 function log groups)
+# What it answers: "something failed during onboarding, what and where?"
+#
+# Uses `level` and `function_name` - real fields Lambda Powertools puts on
+# every structured log line (verified against actual CloudWatch output,
+# not assumed) - rather than filtering on "status" or "validation_type",
+# which only exist inside the SNS notification payload, not the log line
+# itself.
+
+fields @timestamp, function_name, message
+| filter level = "ERROR"
+| sort @timestamp desc
+| limit 20

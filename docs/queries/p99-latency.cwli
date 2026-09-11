@@ -1,0 +1,9 @@
+# Run against: any single Lambda's log group, e.g. /aws/lambda/HealthLab-SubmitEligibility-dev
+# What it answers: "is this function's latency degrading?"
+#
+# @type and @duration come from the Lambda platform's own REPORT log line
+# (not application code), so this works against any Lambda unmodified.
+
+fields @timestamp, @duration
+| filter @type = "REPORT"
+| stats pct(@duration, 99) as p99 by bin(5m)
