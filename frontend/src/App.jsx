@@ -207,7 +207,6 @@ function App() {
                 <ul className="status-list">
                   <li>Status: <strong>{status.status}</strong></li>
                   <li>Identity verified: {String(status.identity_verified)}</li>
-                  <li>Details match: {String(status.details_match)}</li>
                   <li>Eligibility verified: {String(status.eligibility_verified)}</li>
                 </ul>
               )}
