@@ -126,44 +126,49 @@ function App() {
           <p>
             Enter your intake details, then attach a photo of your ID and a selfie.
           </p>
-          <form onSubmit={handleUpload} className="upload-form">
+          <form onSubmit={handleUpload} className="upload-form" autoComplete="off">
             <fieldset className="intake-fields">
               <legend>Intake details</legend>
+              <p className="fieldset-hint">
+                Type these to match your ID exactly — browser autofill is
+                disabled here on purpose, since these fields are compared
+                against what's printed on the document.
+              </p>
               <label>
                 Member ID
-                <input type="text" value={formFields.memberId} onChange={updateField('memberId')} />
+                <input type="text" autoComplete="hl-member-id" value={formFields.memberId} onChange={updateField('memberId')} />
               </label>
               <label>
                 First name
-                <input type="text" value={formFields.firstName} onChange={updateField('firstName')} />
+                <input type="text" autoComplete="hl-first-name" value={formFields.firstName} onChange={updateField('firstName')} />
               </label>
               <label>
                 Last name
-                <input type="text" value={formFields.lastName} onChange={updateField('lastName')} />
+                <input type="text" autoComplete="hl-last-name" value={formFields.lastName} onChange={updateField('lastName')} />
               </label>
               <label>
                 Date of birth
-                <input type="date" value={formFields.dateOfBirth} onChange={updateField('dateOfBirth')} />
+                <input type="date" autoComplete="hl-dob" value={formFields.dateOfBirth} onChange={updateField('dateOfBirth')} />
               </label>
               <label>
                 Address
-                <input type="text" value={formFields.address} onChange={updateField('address')} />
+                <input type="text" autoComplete="hl-address" value={formFields.address} onChange={updateField('address')} />
               </label>
               <label>
                 City
-                <input type="text" value={formFields.city} onChange={updateField('city')} />
+                <input type="text" autoComplete="hl-city" value={formFields.city} onChange={updateField('city')} />
               </label>
               <label>
                 State
-                <input type="text" value={formFields.state} onChange={updateField('state')} />
+                <input type="text" autoComplete="hl-state" value={formFields.state} onChange={updateField('state')} />
               </label>
               <label>
                 ZIP code
-                <input type="text" value={formFields.zip} onChange={updateField('zip')} />
+                <input type="text" autoComplete="hl-zip" value={formFields.zip} onChange={updateField('zip')} />
               </label>
               <label>
                 Insurance provider
-                <input type="text" value={formFields.insuranceProvider} onChange={updateField('insuranceProvider')} />
+                <input type="text" autoComplete="hl-insurance" value={formFields.insuranceProvider} onChange={updateField('insuranceProvider')} />
               </label>
             </fieldset>
             <label>
