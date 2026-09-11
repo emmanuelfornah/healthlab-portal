@@ -602,6 +602,48 @@ Resources:
               audience:
                 - !Ref PatientUserPoolClient
 
+  # Custom domain for the Patient API - regional API Gateway custom domains
+  # use a cert in the API's own region (not us-east-1, unlike the
+  # CloudFront/Cognito certs above, which route through CloudFront).
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Sub 'api.${DomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub 'api.${DomainName}'
+          HostedZoneId: !Ref HostedZoneId
+
+  ApiCustomDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Sub 'api.${DomainName}'
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificate
+          EndpointType: REGIONAL
+
+  ApiCustomDomainMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasCustomDomain
+    Properties:
+      ApiId: !Ref PatientApi
+      DomainName: !Ref ApiCustomDomain
+      Stage: '$default'
+
+  ApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'api.${DomainName}'
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
+        DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+        EvaluateTargetHealth: false
+
   # Lambda backing the patient-facing API: issue a presigned upload URL and
   # look up onboarding status. Protected by the Cognito authorizer above.
   PatientPortalFunction:
@@ -886,6 +928,13 @@ Resources:
       DisplayName: HealthLab Operational Alarms
       KmsMasterKeyId: alias/aws/sns
 
+  OperationalAlarmsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OperationalAlarms
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
   StepFunctionsFailedExecutionsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -977,6 +1026,28 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationalAlarms
+
+  # SLO: 99% of onboarding workflow executions complete within 30 seconds.
+  # Breaching for 2 consecutive 5-minute windows (not a single blip) pages
+  # OperationalAlarms.
+  OnboardingLatencySLOAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HealthLab-OnboardingLatencySLOBreached-${Environment}'
+      AlarmDescription: 'SLO breach: p99 onboarding workflow execution time exceeded 30s for 2 consecutive 5-minute windows'
+      Namespace: AWS/States
+      MetricName: ExecutionTime
+      ExtendedStatistic: p99
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !GetAtt OnboardingStateMachine.Arn
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30000
+      ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref OperationalAlarms
@@ -1084,7 +1155,10 @@ Outputs:
 
   PatientApiEndpoint:
     Description: Patient-facing API endpoint (Cognito-protected)
-    Value: !Sub 'https://${PatientApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Value: !If
+      - HasCustomDomain
+      - !Sub 'https://api.${DomainName}'
+      - !Sub 'https://${PatientApi}.execute-api.${AWS::Region}.amazonaws.com'
     Export:
       Name: !Sub '${AWS::StackName}-PatientApi'
 
