@@ -244,8 +244,9 @@ assert invariants across generated inputs.
 | `tests/unit/test_fhir.py` | FHIR R4 Patient/Coverage mapping |
 | `tests/property/test_eligibility_properties.py` | eligibility invariants (Hypothesis) |
 
-All 34 tests pass locally; `sam validate --lint` passes; the frontend builds,
-lints clean, and its auth tests pass. The full pipeline has also been driven
+The full unit + property-based suite above passes locally and in CI;
+`sam validate --lint` passes; the frontend builds, lints clean, and its
+auth tests pass. The full pipeline has also been driven
 end-to-end against the live deployment (Cognito login → S3 upload → Step
 Functions execution → status/FHIR lookup), not just unit-tested.
 
@@ -283,6 +284,13 @@ environment stack. The Patient API is likewise served from
 **api.healthlabportal.com** (a regional API Gateway custom domain,
 DNS-validated ACM cert) rather than a raw `*.execute-api.*.amazonaws.com`
 URL.
+
+## Where This Fits
+
+Part of [`aws-solutions-portfolio`](https://github.com/emmanuelfornah/aws-solutions-portfolio) —
+this is one of four flagship, independently-designed projects there; see that
+repo for the full breadth of AWS work plus certifications and current
+graduate coursework.
 
 ## Author
 

@@ -12,7 +12,7 @@ make sure resource names / green states are visible.
 |---|---|
 | `01_ci_pipeline_green.png` | GitHub repo → **Actions** tab → the CI run with both jobs (Backend, Frontend) green |
 | `02_repo_homepage.png` | Repo homepage showing the README, badges, and topics |
-| `03_pytest_31_passed.png` | Terminal: `pytest -q` showing **31 passed** |
+| `03_pytest_passed.png` | Terminal: `pytest -q` showing the full suite passing |
 | `04_sam_validate.png` | Terminal: `sam validate --lint` → "valid SAM Template" |
 | `05_frontend_build.png` | Terminal: `npm run build` succeeding |
 
