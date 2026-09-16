@@ -89,18 +89,26 @@ flowchart TD
 
 ## Roadmap
 
-The strongest differentiator here is domain-specific, not infrastructure —
-built on clinical laboratory experience, not a generic CRUD idea:
+The differentiators already built are the security and compliance depth
+— STRIDE threat model, HIPAA technical safeguards mapping, and a formal
+NIST CSF risk assessment (see [SECURITY.md](SECURITY.md) and
+[RISK_ASSESSMENT.md](RISK_ASSESSMENT.md)). What follows here is planned,
+not built yet: domain-specific work grounded in real clinical laboratory
+experience rather than a generic CRUD idea, plus infrastructure
+directions like a managed FHIR datastore and closing the CI test gap:
 
 - **Duplicate & redundant lab-order detection.** Flag lab test orders that
   overlap in their component analytes so physicians avoid redundant draws and
   billing. Examples:
   - A glucose ordered separately when a **BMP** or **CMP** (which already
     include glucose) is also ordered.
-  - A **BMP** later "upgraded" to a **CMP** — the CMP superset already contains
-    the BMP analytes, making the earlier BMP redundant.
-  - Overlapping panels ordered together (e.g. BMP + CMP, where CMP is a superset
-    of BMP + LFT components).
+  - A **BMP** already resulted, then a physician wants expanded liver workup
+    and reorders a full **CMP** — redundantly redrawing/rebilling every BMP
+    analyte the CMP already contains. The clinically sound move is an **LFT
+    add-on** instead: it covers the new liver data without repeating what
+    the BMP already resulted. The system's job is catching the CMP-reorder
+    case and surfacing the add-on as the better option, not treating
+    "reorder as a bigger panel" as routine.
   - **Time-based redundancy** — tests reordered within a clinically meaningless
     interval. For example, **HbA1c ordered again within 3 months**: A1c reflects
     roughly 90 days of average glycemia (red-cell lifespan), so a repeat inside
