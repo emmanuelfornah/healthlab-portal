@@ -265,6 +265,10 @@ Functions execution → status/FHIR lookup), not just unit-tested.
   SQS) — no wildcard admin access, no long-lived credentials in code.
 - No secrets or AWS account identifiers are committed to the repository.
 
+Full threat model (STRIDE), HIPAA technical safeguards mapping, and known
+gaps: [SECURITY.md](SECURITY.md). Formal risk scoring, prioritization,
+and business continuity plan (RTO/RPO by failure mode): [RISK_ASSESSMENT.md](RISK_ASSESSMENT.md).
+
 ## Deployment
 
 The stack deploys via GitHub Actions
