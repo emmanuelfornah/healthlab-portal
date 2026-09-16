@@ -52,6 +52,16 @@ application deploys.
 > (GuardDuty, CloudTrail, Config, Security Hub) don't have this problem,
 > since nothing in this stack owns them.
 
+> **Log retention.** Set operationally via
+> `aws logs put-retention-policy` (2557 days / 7 years, §164.316) directly
+> on each of the 7 Lambda log groups, rather than through the SAM template.
+> Unlike WAF above, this one doesn't have the "silently reverted on next
+> deploy" risk: `template.yaml` doesn't own these log groups at all (they're
+> auto-created by Lambda on first invocation), so `sam deploy` has nothing
+> to resend that would touch the retention setting. Still worth importing
+> into the template eventually for a single source of truth, but not an
+> urgent risk the way WAF's placement was.
+
 > The API layer uses an HTTP API, which does not support direct WAF association
 > (WAF integrates with REST APIs). The API is protected by the Cognito JWT
 > authorizer and API Gateway throttling; unauthenticated requests are rejected
@@ -147,7 +157,6 @@ rather than presenting a false "done" state.
 |---|---|---|
 | MFA not yet enforced on IAM users | Requires enrolling a device per user through the console — a personal action, not an IaC change | Enroll each console user's MFA device, then attach a deny-without-MFA policy: `"Condition": {"BoolIfExists": {"aws:MultiFactorAuthPresent": "false"}}` on a statement denying everything except the MFA self-service actions |
 | IAM Policy Simulator evidence not captured | Requires manually running each of the 7 roles through the console simulator and screenshotting the result — not automatable from this repo | Run each role against the actions its own Lambda calls (and a few it shouldn't have, e.g. `s3:DeleteBucket`) via the console simulator; save results under `/docs/iam-validation/` |
-| CloudWatch log retention not explicitly set | Every Lambda's log group already exists (auto-created on first invocation, outside CloudFormation). Adding a managed `AWS::Logs::LogGroup` resource with the same name now risks a stack deploy failure ("resource already exists") rather than a clean apply | Before adding the resource: either delete the existing auto-created log groups first (losing historical logs) or import them into the stack via a CloudFormation resource import, then set `RetentionInDays: 2557` (7 years, §164.316) per function |
 | Step Functions `Catch` blocks are generic, not structured | Every `Task` state already has a `Catch` (see `onboarding_workflow.asl.json`) — a failure doesn't produce an opaque "workflow failed," it routes to a named failure state. What's missing is embedding the actual runtime values (e.g. face-match confidence vs. threshold) into that failure output rather than a static message | Have each Lambda's exception path attach the specific failure detail (confidence score, threshold, mismatched field names) to its error output, and reference it in the corresponding `Catch`'s `ResultPath` |
 | No automated end-to-end test in CI | The full pipeline has been verified manually against the live stack (sign-in → upload → Step Functions execution → status), but not on every push. A real E2E test needs a disposable Cognito test user, a synthetic ZIP upload, and cleanup logic — plus new IAM permissions on the deploy role — which is a meaningfully larger scope than a config change | A pytest step in CI that creates a Cognito test user via `admin_create_user`, calls `POST /intake/upload-url`, uploads a synthetic ZIP, polls `GET /intake/{id}/status` until terminal, and asserts a non-`PENDING` outcome — then tears the test user down |
 
