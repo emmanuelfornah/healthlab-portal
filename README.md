@@ -49,8 +49,8 @@ records the outcome for the care team.
    (`Eligibility API` → `ValidateEligibility`) and records the result.
 9. `PatientPortal` reads status and the FHIR record back for the patient.
 
-CloudWatch alarms (failed executions, DLQ not empty, Patient API 5xx)
-notify a separate operational SNS topic. Every Lambda has its own
+CloudWatch alarms (failed executions, DLQ not empty, Patient API 5xx,
+`WritePatientRecord` errors) notify a separate operational SNS topic. Every Lambda has its own
 least-privilege IAM role.
 
 ### Reference design (lab)

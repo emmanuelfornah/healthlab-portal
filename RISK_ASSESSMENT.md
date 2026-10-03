@@ -123,8 +123,8 @@ paranoia.
 
 | Scenario | RTO | RPO | Why |
 |---|---|---|---|
-| Single Lambda function failure | Seconds | 0 | Lambda's own automatic retry/redeploy; stateless |
-| Step Functions execution failure | Minutes | 0 | Every state has a `Catch`; SNS notifies on failure; DynamoDB record persists partial progress |
+| Single Lambda function failure | Minutes | 0 | Step Functions invokes each Lambda synchronously and the workflow has no `Retry` rules yet, so a transient error fails that execution into its `Catch` state rather than retrying; recovery is re-running the execution or re-uploading. Adding `Retry` with backoff to each Task state is the planned fix |
+| Step Functions execution failure | Minutes | 0 | Every Task state has a `Catch` (the Parallel state's branches catch their own errors); the failed-executions alarm emails the operator; the DynamoDB record keeps partial progress |
 | DynamoDB table issue | N/A | ≤ 5 min | Point-in-time recovery enabled |
 | CI/CD pipeline failure | N/A | 0 | Deploy only runs after CI passes; a broken deploy simply doesn't ship |
 | Regional AWS outage (us-east-1) | Not defined | Not defined | **Accepted risk, not mitigated** — see below |
@@ -142,10 +142,11 @@ on this entire document; at this project's actual scope, it's an
 accepted risk, written down rather than silently ignored.
 
 **Communication plan during a disruption:** SNS notification to the
-`OnboardingNotifications` topic on any workflow failure; CloudWatch
-alarms on Step Functions failures, the eligibility DLQ, API 5xx errors,
-and critical-path Lambda errors, aggregated on the
-`HealthLab-Operations-dev` dashboard. For a solo-maintained project,
+`OnboardingNotifications` topic (care team) when an identity, details or
+eligibility check fails; CloudWatch alarms on Step Functions failures,
+the eligibility DLQ, API 5xx errors, and `WritePatientRecord` errors,
+emailed through the `OperationalAlarms` topic (operator) and aggregated
+on the `HealthLab-Operations-dev` dashboard. For a solo-maintained project,
 "the maintainer gets paged" is the entire communication plan — stated
 plainly rather than describing an incident-response team this project
 doesn't have.

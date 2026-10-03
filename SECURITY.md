@@ -1,7 +1,9 @@
 # Security
 
 This document describes the security controls for HealthLab Portal and how each
-one is applied. Controls are split into **enforced in code (IaC)** and
+one is applied. Every "enforced in code" row was last checked line by line
+against `backend/template.yaml`, the Lambda source and `ci.yml` on
+3 October 2026. Controls are split into **enforced in code (IaC)** and
 **applied at the account/edge level (console)** so it is clear what deploys
 automatically versus what an operator enables.
 
@@ -20,7 +22,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | Encryption at rest — DynamoDB | `SSESpecification` (AWS-managed key) |
 | Point-in-time recovery — DynamoDB | `PointInTimeRecoverySpecification` |
 | Encryption at rest — SQS + DLQ | `SqsManagedSseEnabled` |
-| Encryption at rest — SNS | `KmsMasterKeyId: alias/aws/sns` |
+| Encryption at rest — SNS | `OnboardingNotifications`: AWS-managed key (`alias/aws/sns`). `OperationalAlarms`: a customer-managed KMS key with rotation on, because CloudWatch alarms can't publish to a topic encrypted with the AWS-managed key (see below) |
 | Least-privilege IAM | Each of the 7 Lambdas has its **own** IAM role scoped to only the actions its own code calls (e.g. `ValidateEligibilityRole` has no AWS resource permissions at all — that handler never touches S3/DynamoDB/etc.), rather than one broad role shared across every function — no wildcard admin anywhere |
 | Authentication | Amazon Cognito User Pool; patient API protected by a Cognito JWT authorizer |
 | PKCE (OAuth) | Frontend's Authorization Code flow uses PKCE (S256) — a leaked authorization code alone isn't redeemable for tokens |
@@ -31,7 +33,7 @@ These deploy automatically with `sam deploy` — no manual steps.
 | Operational monitoring | CloudWatch alarms on Step Functions failures, the eligibility DLQ, Patient API 5xx errors, and critical-path Lambda errors, notifying a dedicated `OperationalAlarms` SNS topic; a CloudWatch dashboard aggregates workflow, API, Lambda, and queue metrics |
 | WAF on the frontend | `AWS::WAFv2::WebACL` (Core rule set + Known Bad Inputs managed rule groups, plus a 1,000 req/5min per-IP rate limit) attached directly to the CloudFront distribution's `WebACLId` |
 | TLS-only S3 access | Both S3 bucket policies (intake bucket, frontend bucket) explicitly `Deny` any request where `aws:SecureTransport` is `false` — belt-and-suspenders on top of everything already being HTTPS in practice |
-| No secrets in VCS | No credentials or account IDs committed; `.env` gitignored |
+| No secrets in VCS | No credentials, keys or tokens committed; `.env` gitignored. The account ID does appear, inside the deploy role ARN in `ci.yml`: an account ID is an identifier, not a credential, and that role can only be assumed through GitHub OIDC from this repository |
 | No Lambda Function URLs | None of the 7 Lambdas has a `FunctionUrlConfig` — every invocation path goes through API Gateway (JWT-authorized) or an internal event source (S3/EventBridge/SQS/Step Functions), never a directly-invokable public URL |
 
 ## Applied in the console (edge / account level)
@@ -79,17 +81,24 @@ JWT authorizer at the API layer and per-function least-privilege IAM roles
 at the compute layer (see the table above) — noted explicitly so the
 absence of VPC controls reads as a deliberate architectural fit, not a gap.
 
-### Customer-managed KMS keys — considered, not adopted
+### Customer-managed KMS keys — used only where required
 
-Everything is encrypted at rest (see table above) using AWS-managed keys
-(SSE-S3 / `alias/aws/*`) rather than a customer-managed key (CMK). A CMK
-would add a key policy scoping exactly which roles can use it, rotation
-control, and the ability to revoke access at the key level independent of
-IAM. Deliberately not adopted: it's a small recurring cost (~$1/month) for
-a capability — independent key-level access revocation — this project
-doesn't currently need, since per-function IAM roles already scope access
-tightly. Worth revisiting if this needs to satisfy a real audit rather than
-demonstrate the pattern.
+Data is encrypted at rest with AWS-managed keys (SSE-S3 / `alias/aws/*`)
+rather than customer-managed keys (CMKs). A CMK would add a key policy
+scoping exactly which roles can use it, rotation control, and key-level
+revocation independent of IAM. For data, that's ~$1/month per key for a
+capability this project doesn't need yet, since per-function IAM roles
+already scope access tightly.
+
+**One exception, found in review:** the `OperationalAlarms` topic was
+originally on `alias/aws/sns`. CloudWatch alarms can't publish to a topic
+encrypted with the AWS-managed SNS key, because that key's policy can't be
+edited to let `cloudwatch.amazonaws.com` use it. All four alarms would fire
+with no email ever sent. That topic now uses a CMK (`OperationalAlarmsKey`)
+whose policy grants CloudWatch `kms:Decrypt` and `kms:GenerateDataKey*`,
+with rotation on. Here the CMK is a functional requirement, not hardening.
+`OnboardingNotifications` stays on `alias/aws/sns`: only Lambdas publish to
+it, through their own IAM roles, which the AWS-managed key allows.
 
 ### Account-level threat detection & monitoring
 
@@ -145,7 +154,7 @@ in VCS" rule above).
 | **T**ampering | A patient's `intake_id` leaks (screenshot, log, referrer) and is used to view or alter another patient's record | `PATIENT_SUB` ownership check on `/status` and `/fhir`; `write_patient_record` merges via `update_item`, never a blind overwrite that could erase ownership |
 | **R**epudiation | Dispute over whether an identity/eligibility check ran, or what it returned | Structured Powertools logs + X-Ray tracing on every Lambda and the state machine; an SNS notification fires on every failed check, creating a record independent of the DynamoDB row |
 | **I**nformation disclosure | Intake ZIP (ID photo, selfie, PII) intercepted in transit, or read from storage by an unauthorized principal | TLS end-to-end (API Gateway, CloudFront, presigned URLs); S3/DynamoDB/SQS/SNS encrypted at rest; per-function IAM roles limit what a compromised Lambda could actually read |
-| **D**enial of service | A flood of upload or API requests drives up cost or exhausts downstream capacity | API Gateway default throttling; 300s presigned-URL expiry; SQS + DLQ (`maxReceiveCount: 5`) absorbs eligibility-check bursts without cascading Lambda retries; WAF rate-based rule (console, see above) |
+| **D**enial of service | A flood of upload or API requests drives up cost or exhausts downstream capacity | API Gateway default throttling; 300s presigned-URL expiry; SQS + DLQ (`maxReceiveCount: 5`) absorbs eligibility-check bursts without cascading Lambda retries; WAF rate-based rule (1,000 requests per 5 minutes per IP, in the SAM template) on the frontend |
 | **E**levation of privilege | A compromised Lambda (e.g. a vulnerable dependency) is used to pivot into other AWS resources | Per-function least-privilege IAM roles — e.g. a compromised `ValidateEligibilityFunction` has zero AWS resource permissions to pivot with, by design |
 
 ## Known limitations (tracked honestly, not silently deferred)
