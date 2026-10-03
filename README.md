@@ -26,6 +26,59 @@ records the outcome for the care team.
 
 ## Architecture
 
+### As built
+
+![HealthLab Portal architecture as built](docs/architecture/as-built-architecture.webp)
+
+1. The patient loads the React app from **CloudFront**, behind **AWS WAF**,
+   served from a private S3 bucket (Origin Access Control).
+2. They sign in through the **Cognito** hosted UI (authorization code + PKCE).
+3. The **Patient API** (API Gateway HTTP API, JWT-authorized) and the
+   `PatientPortal` Lambda issue a presigned upload URL.
+4. The browser uploads the intake bundle (intake form CSV, selfie, ID
+   document) straight to the encrypted **intake bucket**.
+5. An **EventBridge** rule on *Object Created* starts the **Step Functions**
+   onboarding workflow.
+6. `UnzipIntake` → `WritePatientRecord` creates the patient's record in
+   **DynamoDB**.
+7. `VerifyIdentity` (**Rekognition** `CompareFaces`) and `ExtractDetails`
+   (**Textract** `AnalyzeID`) run in parallel; each writes its own status
+   field and publishes to **SNS** for the care team if its check fails.
+8. After both checks, the workflow queues an eligibility check on **SQS**
+   (with a dead-letter queue); `SubmitEligibility` calls the mock payer
+   (`Eligibility API` → `ValidateEligibility`) and records the result.
+9. `PatientPortal` reads status and the FHIR record back for the patient.
+
+CloudWatch alarms (failed executions, DLQ not empty, Patient API 5xx)
+notify a separate operational SNS topic. Every Lambda has its own
+least-privilege IAM role.
+
+### Reference design (lab)
+
+![Reference architecture from the lab](docs/architecture/reference-design-lab.webp)
+
+*Adapted from the AWS Cloud Institute reference architecture this
+project started from.*
+
+**What changed from the reference, and why:**
+
+- **One document Lambda became a Step Functions workflow.** Each step is
+  small and tested on its own, the identity and details checks run in
+  parallel, and each failure is caught and visible in one execution
+  history.
+- **S3 triggers the workflow through EventBridge**, not a direct
+  invocation, so the trigger is a rule that can be filtered and audited.
+- **A front door was added:** CloudFront + WAF for the app, Cognito sign-in,
+  and a JWT-authorized Patient API, so uploads go through presigned URLs
+  instead of open bucket access.
+- **The queue got a dead-letter queue, and the system got alarms,** so a
+  stuck eligibility check is caught rather than silently lost.
+- **"License validation" became insurance eligibility,** the check a lab
+  ordering workflow actually needs, with a FHIR R4 view of the record.
+
+<details>
+<summary>Text version of the as-built diagram (Mermaid)</summary>
+
 ```mermaid
 flowchart TD
     Patient([Patient - Browser])
@@ -86,6 +139,8 @@ flowchart TD
 
     style DDB fill:#4a5fc1,color:#fff
 ```
+
+</details>
 
 ## Roadmap
 
