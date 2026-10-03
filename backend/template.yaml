@@ -921,12 +921,41 @@ Resources:
   # this topic is for infra/ops signals - subscribe an on-call email here.
   # ============================================================
 
+  # Customer-managed key, not alias/aws/sns: CloudWatch alarms can't
+  # publish to a topic encrypted with the AWS-managed SNS key (its key
+  # policy can't be edited to let cloudwatch.amazonaws.com use it), so with
+  # alias/aws/sns every alarm below fired without ever sending its email.
+  # OnboardingNotifications keeps alias/aws/sns: only Lambdas publish to
+  # it, through their IAM roles, which the AWS-managed key allows.
+  OperationalAlarmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'OperationalAlarms SNS topic encryption (${Environment})'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: CloudWatchAlarmsPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: '*'
+
   OperationalAlarms:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub 'OperationalAlarms-${Environment}'
       DisplayName: HealthLab Operational Alarms
-      KmsMasterKeyId: alias/aws/sns
+      KmsMasterKeyId: !Ref OperationalAlarmsKey
 
   OperationalAlarmsSubscription:
     Type: AWS::SNS::Subscription
